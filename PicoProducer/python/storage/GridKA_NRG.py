@@ -13,7 +13,7 @@ class GridKA_NRG(StorageSystem):
         self.lscmd = "xrdfs"
         self.lsurl = "root://cmsxrootd-kit.gridka.de/ ls "
         self.rmcmd = "xrdfs"
-        self.rmurl = "root://cmsxrootd-kit.gridka.de/ ls "
+        self.rmurl = "root://cmsxrootd-kit.gridka.de/ rm "
         self.mkdrcmd = "xrdfs"
         self.mkdrurl = 'root://cmsxrootd-kit.gridka.de/ mkdir -p '
         self.cpcmd = 'xrdcp -f'
