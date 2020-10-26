@@ -14,12 +14,13 @@ class SLURM(BatchSystem):
     self.jobidrexp  = re.compile("Submitted batch job (\d+)")
     self.user       = getpass.getuser()
   
-  def submit(self,script,**kwargs):
+  def submit(self,script,taskfile=None,**kwargs):
     """Submit a script with some optional parameters."""
     name      = kwargs.get('name',   None           )
     array     = kwargs.get('array',  None           )
-    queue     = kwargs.get('queue',  None           ) # 'all.q','short.q','long.q'
-    time      = kwargs.get('time',   None           )
+    queue     = kwargs.get('queue',  None           ) # queue/partition: 'quick','wn','qgpu', 'gpu'
+    time      = kwargs.get('time',   None           ) # e.g. 420, 04:20:00, 04:20
+    short     = kwargs.get('short',  False          ) # run short test job
     mem       = kwargs.get('mem',    None           )
     logdir    = kwargs.get('logdir', None           )
     logfile   = kwargs.get('log',    "%x.%A.%a"     ) # $JOBNAME.o$JOBID.$TASKID
@@ -36,6 +37,9 @@ class SLURM(BatchSystem):
         subcmd += " -a 1-%s"%(array)
       else:
         subcmd += " -a %s"%(array)
+    if short:
+      if not queue: queue = "quick" # shortest partition name might vary per system (check sinfo)
+      if not time:  time  = "00:06:00" # 6 minutes
     if queue:
       subcmd += " --partition %s"%(queue)
     if logfile:
@@ -43,12 +47,21 @@ class SLURM(BatchSystem):
         logfile = os.path.join(logdir,logfile)
       subcmd += " -o %s"%(logfile)
     if time:
+      if time.count(':')==0: # e.g. 420
+        secs  = int(time)
+        hours = secs // (60*60); secs %= (60*60)
+        mins  = secs // 60;      secs %= 60
+        time  = "%02d:%02d:%02d"%(hours,mins,secs)
+      elif time.count(':')==1: # e.g. 04:20
+        time += ":00"
       subcmd += " --time='%s'"%(time) # e.g. "04:20:00"
     if mem:
       subcmd += " --mem=%sM"%(mem) # e.g. 5000
     if options:
       subcmd += " "+options
     subcmd += " "+script
+    if taskfile:
+      subcmd += " "+taskfile # list of tasks to be executed per job by submit_SLURM.sh
     out  = self.execute(subcmd,dry=dry,verb=verbosity)
     fail = False
     for line in out.split(os.linesep):

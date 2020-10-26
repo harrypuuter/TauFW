@@ -3,10 +3,11 @@ import os, re, shutil
 import importlib, traceback
 import ROOT; ROOT.PyConfig.IgnoreCommandLineOptions = True
 from TauFW.common.tools.log import LOG
+from TauFW.common.tools.utils import ensurelist
 basedir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 
 
-def writetemplate(templatename,outfilename,sublist=[],rmlist=[],**kwargs):
+def writetemplate(templatename,outfilename,sublist=[],rmlist=[],applist=[],**kwargs):
   """Write file from template."""
   sublist = [(re.compile("\$%s(?!\w)"%p),str(v)) for p, v in sublist]
   with open(templatename,'r') as template:
@@ -21,6 +22,8 @@ def writetemplate(templatename,outfilename,sublist=[],rmlist=[],**kwargs):
             #line = line.replace(pattern,str(value))
             line = regexp.sub(value,line)
         file.write(line)
+      for line in ensurelist(applist):
+        file.write(line+'\n') # append
   
 
 def ensuredir(*dirnames,**kwargs):
@@ -61,7 +64,8 @@ def ensurefile(*paths,**kwargs):
   
 
 def ensuremodule(modname,package):
-  """Ensure Sample method exists in python/methods."""
+  """Ensure Sample method exists in python/methods.
+  E.g. module = ensuremodule(modname,"PicoProducer.analysis")"""
   # TODO: absolute path
   modfile  = ensurefile(basedir,package.replace('.','/python/',1),"%s.py"%(modname.replace('.','/')))
   modpath  = "TauFW.%s.%s"%(package,modname) #modfile.replace('.py','').replace('/','.')
@@ -95,16 +99,33 @@ def getline(fname,iline):
   return target
   
 
-def ensureTFile(filename,option='READ'):
+def ensureTFile(filename,option='READ',verb=0):
   """Open TFile, checking if the file in the given path exists."""
-  if not os.path.isfile(filename):
-    LOG.throw(IOError,'File in path "%s" does not exist!'%(filename))
-    exit(1)
-  file = ROOT.TFile.Open(filename,option)
-  if not file or file.IsZombie():
-    LOG.throw(IOError,'Could not open file by name "%s"'%(filename))
-    exit(1)
+  if isinstance(filename,str):
+    if ':' not in filename and not os.path.isfile(filename):
+      LOG.throw(IOError,'File in path "%s" does not exist!'%(filename))
+      exit(1)
+    file = ROOT.TFile.Open(filename,option)
+    if not file or file.IsZombie():
+      LOG.throw(IOError,'Could not open file by name %r!'%(filename))
+    LOG.verb("Opened file %s..."%(filename),verb,1)
+  else:
+    file = filename
+    if not file or (hasattr(file,'IsZombie') and file.IsZombie()):
+      LOG.throw(IOError,'Could not open file %r!'%(file))
   return file
+  
+
+def ensureTDirectory(file,dirname,cd=True,verb=0):
+  """Make TDirectory in a file (or other TDirectory) if it does not yet exist."""
+  directory = file.GetDirectory(dirname)
+  if not directory:
+    directory = file.mkdir(dirname)
+    if verb>=1:
+      print ">>> created directory %s in %s"%(dirname,file.GetName())
+  if cd:
+    directory.cd()
+  return directory
   
 
 def ensureinit(*paths,**kwargs):
@@ -119,30 +140,25 @@ def ensureinit(*paths,**kwargs):
       file.write("# Generated%s to allow import of the sample list modules\n"%(script))
   
 
-#def extractTH1(file,histname,setdir=True,close=None):
-#  """Get histogram from a given file."""
-#  if isinstance(file,str):
-#    file = ensuretfile(file)
-#    if close==None: close = True
-#  if not file or file.IsZombie():
-#    raise OSError('Could not open file!')
-#    exit(1)
-#  hist = file.Get(histname)
-#  if not hist:
-#    raise OSError('Did not find histogram "%s" in file %s!'%(histname,file.GetName()))
-#    exit(1)
-#  if (close or setdir) and isinstance(hist,TH1):
-#    hist.SetDirectory(0)
-#  if close:
-#    file.Close()
-#  return hist
-#  
-#
-#def ensureTFileAndTH1(filename,histname,verbose=True,setdir=True):
-#  """Open a TFile and get a histogram."""
-#  if verbose:
-#    print ">>>   %s"%(filename)
-#  file = ensuretfile(filename,'READ')
-#  hist = extractTH1(file,histname,setdir=setdir)
-#  return file, hist
-
+def gethist(file,histname,setdir=True,close=None,retfile=False,fatal=True):
+  """Get histogram from a given file."""
+  if isinstance(file,str): # open TFile
+    file = ensureTFile(file)
+    if close==None:
+      close = not retfile
+  if not file or file.IsZombie():
+    LOG.throw(IOError,'Could not open file by name "%s"'%(filename))
+  hist = file.Get(histname)
+  if not hist:
+    if fatal:
+      LOG.throw(IOError,'Did not find histogram %r in file %s!'%(histname,file.GetName()))
+    else:
+      LOG.warning('Did not find histogram %r in file %s!'%(histname,file.GetName()))
+  if (close or setdir) and isinstance(hist,ROOT.TH1):
+    hist.SetDirectory(0)
+  if close: # close TFile
+    file.Close()
+  if retfile:
+    return file, hist
+  return hist
+  

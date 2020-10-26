@@ -2,12 +2,9 @@
 # Description: Simple module to pre-select mutau events
 import sys
 import numpy as np
-from PhysicsTools.NanoAODTools.postprocessing.framework.postprocessor import PostProcessor
-from PhysicsTools.NanoAODTools.postprocessing.framework.datamodel import Collection
-from PhysicsTools.NanoAODTools.postprocessing.framework.eventloop import Module
 from TauFW.PicoProducer.analysis.TreeProducerMuTau import *
 from TauFW.PicoProducer.analysis.ModuleTauPair import *
-from TauFW.PicoProducer.analysis.utils import LeptonTauPair, loosestIso, idIso
+from TauFW.PicoProducer.analysis.utils import LeptonTauPair, loosestIso, idIso, matchgenvistau, matchtaujet
 from TauFW.PicoProducer.corrections.MuonSFs import *
 #from TauFW.PicoProducer.corrections.TrigObjMatcher import loadTriggerDataFromJSON, TrigObjMatcher
 from TauPOG.TauIDSFs.TauIDSFTool import TauIDSFTool, TauESTool
@@ -38,8 +35,9 @@ class ModuleMuTau(ModuleTauPair):
     
     # CORRECTIONS
     if self.ismc:
-      self.muSFs   = MuonSFs(year=self.year)
-      self.tesTool = TauESTool(tauSFVersion[self.year])
+      self.muSFs   = MuonSFs(era=self.era,verb=self.verbosity) # muon id/iso/trigger SFs
+      self.tesTool = TauESTool(tauSFVersion[self.year]) # real tau energy scale corrections
+      #self.fesTool = TauFESTool(tauSFVersion[self.year]) # e -> tau fake negligible
       self.tauSFs  = TauIDSFTool(tauSFVersion[self.year],'DeepTau2017v2p1VSjet','Tight')
       self.etfSFs  = TauIDSFTool(tauSFVersion[self.year],'DeepTau2017v2p1VSe',  'VLoose')
       self.mtfSFs  = TauIDSFTool(tauSFVersion[self.year],'DeepTau2017v2p1VSmu', 'Tight')
@@ -57,6 +55,7 @@ class ModuleMuTau(ModuleTauPair):
   def beginJob(self):
     """Before processing any events or files."""
     super(ModuleMuTau,self).beginJob()
+    print ">>> %-12s = %s"%('tauwp',      self.tauwp)
     print ">>> %-12s = %s"%('muonCutPt',  self.muonCutPt)
     print ">>> %-12s = %s"%('muonCutEta', self.muonCutEta)
     print ">>> %-12s = %s"%('tauCutPt',   self.tauCutPt)
@@ -96,13 +95,13 @@ class ModuleMuTau(ModuleTauPair):
     ##### MUON #######################################
     muons = [ ]
     for muon in Collection(event,'Muon'):
-      if muon.pt < self.muonCutPt(event): continue
-      if abs(muon.eta) > self.muonCutEta(event): continue
-      if abs(muon.dz) > 0.2: continue
-      if abs(muon.dxy) > 0.045: continue
+      if muon.pt<self.muonCutPt(event): continue
+      if abs(muon.eta)>self.muonCutEta(event): continue
+      if abs(muon.dz)>0.2: continue
+      if abs(muon.dxy)>0.045: continue
       if not muon.mediumId: continue
       if muon.pfRelIso04_all>0.50: continue
-      muons.append(muon)    
+      muons.append(muon)
     if len(muons)==0:
       return False
     self.out.cutflow.fill('muon')
@@ -115,26 +114,35 @@ class ModuleMuTau(ModuleTauPair):
       if abs(tau.dz)>0.2: continue
       if tau.decayMode not in [0,1,10,11]: continue
       if abs(tau.charge)!=1: continue
+      if tau.idDeepTau2017v2p1VSe<1: continue # VVVLoose
+      if tau.idDeepTau2017v2p1VSmu<1: continue # VLoose
+      if tau.idDeepTau2017v2p1VSjet<self.tauwp: continue
       if self.ismc:
+        tau.es   = 1 # store energy scale for propagating to MET
         genmatch = tau.genPartFlav
         if genmatch==5: # real tau
-          tes = 1
-          if self.tes!=None:
-            tes *= self.tes
-          else:
-            tes *= self.tesTool.getTES(tau.pt,tau.decayMode,unc=self.tessys)
+          if self.tes!=None: # user-defined energy scale (for TES studies)
+            tes = self.tes
+          else: # (apply by default)
+            tes = self.tesTool.getTES(tau.pt,tau.decayMode,unc=self.tessys)
           if tes!=1:
             tau.pt   *= tes
             tau.mass *= tes
-        elif self.ltf!=1.0 and 0<genmatch<5: # lepton -> tau fake
+            tau.es    = tes
+        elif self.ltf and 0<genmatch<5: # lepton -> tau fake
           tau.pt   *= self.ltf
           tau.mass *= self.ltf
+          tau.es    = self.ltf
+        #elif genmatch in [1,3]: # electron -> tau fake (apply by default, override with 'ltf=1.0')
+        #  fes = self.fesTool.getFES(tau.eta,tau.decayMode,unc=self.fes)
+        #  tau.pt   *= fes
+        #  tau.mass *= fes
+        #  tau.es    = fes
         elif self.jtf!=1.0 and genmatch==0: # jet -> tau fake
           tau.pt   *= self.jtf
           tau.mass *= self.jtf
+          tau.es    = self.jtf
       if tau.pt<self.tauCutPt: continue
-      if tau.idDeepTau2017v2p1VSe<1: continue
-      if tau.idDeepTau2017v2p1VSmu<1: continue
       taus.append(tau)
     if len(taus)==0:
       return False
@@ -157,8 +165,8 @@ class ModuleMuTau(ModuleTauPair):
     
     
     # VETOS
-    extramuon_veto, extraelec_veto, dilepton_veto = getLeptonVetoes(event,[ ],[muon],[tau],self.channel)
-    self.out.extramuon_veto[0], self.out.extraelec_veto[0], self.out.dilepton_veto[0] = getLeptonVetoes(event,[ ],[muon],[ ],self.channel)
+    extramuon_veto, extraelec_veto, dilepton_veto = getlepvetoes(event,[ ],[muon],[tau],self.channel)
+    self.out.extramuon_veto[0], self.out.extraelec_veto[0], self.out.dilepton_veto[0] = getlepvetoes(event,[ ],[muon],[ ],self.channel)
     self.out.lepton_vetoes[0]       = self.out.extramuon_veto[0] or self.out.extraelec_veto[0] or self.out.dilepton_veto[0]
     self.out.lepton_vetoes_notau[0] = extramuon_veto or extraelec_veto or dilepton_veto
     
@@ -215,38 +223,21 @@ class ModuleMuTau(ModuleTauPair):
     
     # GENERATOR
     if self.ismc:
-      self.out.genmatch_1[0] = muon.genPartFlav
-      self.out.genmatch_2[0] = tau.genPartFlav
-      dRmin    = 0.5
-      taumatch = None
-      for genvistau in Collection(event,'GenVisTau'):
-        dR = genvistau.DeltaR(tau)
-        if dR<dRmin:
-          dRmin    = dR
-          taumatch = genvistau
-      if taumatch:
-        self.out.genvistaupt_2[0]  = taumatch.pt
-        self.out.genvistaueta_2[0] = taumatch.eta
-        self.out.genvistauphi_2[0] = taumatch.phi
-        self.out.gendm_2[0]        = taumatch.status
-      else:
-        self.out.genvistaupt_2[0]  = -1
-        self.out.genvistaueta_2[0] = -9
-        self.out.genvistauphi_2[0] = -9
-        self.out.gendm_2[0]        = -1
+      self.out.genmatch_1[0]     = muon.genPartFlav
+      self.out.genmatch_2[0]     = tau.genPartFlav
+      pt, phi, eta, status       = matchgenvistau(event,tau)
+      self.out.genvistaupt_2[0]  = pt
+      self.out.genvistaueta_2[0] = eta
+      self.out.genvistauphi_2[0] = phi
+      self.out.gendm_2[0]        = status
     
     
     # JETS
     jets, met, njets_vars, met_vars = self.fillJetBranches(event,muon,tau)
-    if tau.jetIdx>=0:
-      self.out.jpt_match_2[0] = event.Jet_pt[tau.jetIdx]
-      if self.ismc:
-        if event.Jet_genJetIdx[tau.jetIdx]>=0:
-          self.out.jpt_genmatch_2[0] = event.GenJet_pt[event.Jet_genJetIdx[tau.jetIdx]]
-        else:
-          self.out.jpt_genmatch_2[0] = -1
+    if self.ismc:
+      self.out.jpt_match_2[0], self.out.jpt_genmatch_2[0] = matchtaujet(event,tau,self.ismc)
     else:
-      self.out.jpt_match_2[0] = -1
+      self.out.jpt_match_2[0] = matchtaujet(event,tau,self.ismc)[0]
     
     
     # WEIGHTS
@@ -256,43 +247,43 @@ class ModuleMuTau(ModuleTauPair):
         self.btagTool.fillEffMaps(jets,usejec=self.dojec)
       
       # MUON WEIGHTS
-      self.out.trigweight[0]              = self.muSFs.getTriggerSF(muon.pt,muon.eta)
-      self.out.idisoweight_1[0]           = self.muSFs.getIdIsoSF(muon.pt,muon.eta)
+      self.out.trigweight[0]          = self.muSFs.getTriggerSF(muon.pt,muon.eta)
+      self.out.idisoweight_1[0]       = self.muSFs.getIdIsoSF(muon.pt,muon.eta)
       
       # DEFAULTS
-      self.out.idweight_2[0]              = 1.
-      self.out.ltfweight_2[0]             = 1.
+      self.out.idweight_2[0]          = 1.
+      self.out.ltfweight_2[0]         = 1.
       if not self.dotight:
-        self.out.idweightUp_2[0]          = 1.
-        self.out.idweightDown_2[0]        = 1.
-        self.out.ltfweightUp_2[0]         = 1.
-        self.out.ltfweightDown_2[0]       = 1.
+        self.out.idweightUp_2[0]      = 1.
+        self.out.idweightDown_2[0]    = 1.
+        self.out.ltfweightUp_2[0]     = 1.
+        self.out.ltfweightDown_2[0]   = 1.
       
       # TAU WEIGHTS
       if tau.genPartFlav==5: # real tau
-        self.out.idweight_2[0]              = self.tauSFs.getSFvsPT(tau.pt)
+        self.out.idweight_2[0]        = self.tauSFs.getSFvsPT(tau.pt)
         if not self.dotight:
-          self.out.idweightUp_2[0]          = self.tauSFs.getSFvsPT(tau.pt,unc='Up')
-          self.out.idweightDown_2[0]        = self.tauSFs.getSFvsPT(tau.pt,unc='Down')
+          self.out.idweightUp_2[0]    = self.tauSFs.getSFvsPT(tau.pt,unc='Up')
+          self.out.idweightDown_2[0]  = self.tauSFs.getSFvsPT(tau.pt,unc='Down')
       elif tau.genPartFlav in [1,3]: # muon -> tau fake
-        self.out.ltfweight_2[0]             = self.etfSFs.getSFvsEta(tau.eta,tau.genPartFlav)
+        self.out.ltfweight_2[0]       = self.etfSFs.getSFvsEta(tau.eta,tau.genPartFlav)
         if not self.dotight:
-          self.out.ltfweightUp_2[0]         = self.etfSFs.getSFvsEta(tau.eta,tau.genPartFlav,unc='Up')
-          self.out.ltfweightDown_2[0]       = self.etfSFs.getSFvsEta(tau.eta,tau.genPartFlav,unc='Down')
+          self.out.ltfweightUp_2[0]   = self.etfSFs.getSFvsEta(tau.eta,tau.genPartFlav,unc='Up')
+          self.out.ltfweightDown_2[0] = self.etfSFs.getSFvsEta(tau.eta,tau.genPartFlav,unc='Down')
       elif tau.genPartFlav in [2,4]: # electron -> tau fake
-        self.out.ltfweight_2[0]             = self.mtfSFs.getSFvsEta(tau.eta,tau.genPartFlav)
+        self.out.ltfweight_2[0]       = self.mtfSFs.getSFvsEta(tau.eta,tau.genPartFlav)
         if not self.dotight:
-          self.out.ltfweightUp_2[0]         = self.mtfSFs.getSFvsEta(tau.eta,tau.genPartFlav,unc='Up')
-          self.out.ltfweightDown_2[0]       = self.mtfSFs.getSFvsEta(tau.eta,tau.genPartFlav,unc='Down')
-      self.out.weight[0]        = self.out.genweight[0]*self.out.puweight[0]*self.out.trigweight[0]*self.out.idisoweight_1[0] #*self.out.idisoweight_2[0]
+          self.out.ltfweightUp_2[0]   = self.mtfSFs.getSFvsEta(tau.eta,tau.genPartFlav,unc='Up')
+          self.out.ltfweightDown_2[0] = self.mtfSFs.getSFvsEta(tau.eta,tau.genPartFlav,unc='Down')
+      self.out.weight[0]              = self.out.genweight[0]*self.out.puweight[0]*self.out.trigweight[0]*self.out.idisoweight_1[0] #*self.out.idisoweight_2[0]
     elif self.isembed:
       ###self.applyCommonEmbdedCorrections(event,jets,jetIds50,met,njets_vars,met_vars)
-      self.out.genweight[0]     = event.genWeight
-      self.out.trackweight[0]   = 0.975 if tau.decayMode==0 else 1.0247 if tau.decayMode==1 else 0.927 if tau.decayMode==10 else 0.974 if tau.decayMode==11 else 1.0
+      self.out.genweight[0]           = event.genWeight
+      self.out.trackweight[0]         = 0.975 if tau.decayMode==0 else 1.0247 if tau.decayMode==1 else 0.927 if tau.decayMode==10 else 0.974 if tau.decayMode==11 else 1.0
     
     
     # MET & DILEPTON VARIABLES
-    self.fillMETAndDiLeptonBranches(event,muon.tlv,tau.tlv,met,met_vars)
+    self.fillMETAndDiLeptonBranches(event,muon,tau,met,met_vars)
     
     
     self.out.fill()

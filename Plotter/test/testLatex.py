@@ -47,8 +47,22 @@ def checklatex(texts,tag=""):
 def main():
   
   checklatex([
+    'pt','pT','PT','p_t','p_T','P_t','P_T',
+    "Forward jet pt", "Forward jet pt (|eta|<2.5)",
+    "Forward jet eta", "Forward jet eta (pt>30)", "Forward jet eta (pt > 30 GeV)",
+  ],tag='_pt')
+  checklatex([
+    'mt','mT','MT','m_t','m_T','M_t','M_T',
+  ],tag='_mt')
+  checklatex([
+    'st','sT','ST','s_t','s_T','S_t','S_T',
+    'stmet','STMET',
+    'pt_1+pt_2+jpt_1', 'pt_1+pt_2+jpt_1+met'
+  ],tag='_st')
+  checklatex([
     'Z -> tautau',
     'Z -> tautau_h',
+    'Z -> tauhtauh',
     'Z -> tau_htau_h',
     'Z -> tautau_{h}',
     'Z -> tau_mutau_{h}',
@@ -59,7 +73,27 @@ def main():
     'pt_1 / pt_2',
     'pt_1 + pt_2',
     'min(pt_1,pt_2)',
+    'mt(mu,tau)',
   ],tag='_recursive')
+  checklatex([
+    'mutau',
+    'etau',
+    'tautau',
+    'mutau_h',
+    'tau_htau_h',
+    'tau_{h}tau_{h}',
+    'mutau: baseline',
+    'tau_{h}tau_{h}: baseline',
+  ],tag='_text')
+  checklatex([
+    "DR", "dR", "DeltaR", "Drell-Yan",
+    "DR_mutau_h",
+    "DR_etau_h",
+    "DR_tautau",
+    "DR_tauhtauh",
+    "DR_tau_htau_h",
+    "DR_emu",
+  ],tag='_DR')
   
 
 if __name__ == "__main__":

@@ -12,29 +12,6 @@ from TauFW.Plotter.plot.MultiThread import MultiProcessor
 from TauFW.common.tools.LoadingBar import LoadingBar
 
 
-#def closeFakeFactor():
-#  from ROOT import closeFakeFactor as _closeFakeFactor
-#  _closeFakeFactor()
-#modulepath = os.path.dirname(__file__)
-#if GLOB.loadMacros:
-#  ###gROOT.Macro('PlotTools/weightJEta1.C+')
-#  if doFakeRate:
-#    gROOT.Macro(modulepath+'/fakeRate/fakeRate.C+O')
-#    from ROOT import readFakeRateFile
-#    readFakeRateFile("MVAoldDM2017v2",'T',GLOB.year)
-#  elif doFakeFactor:
-#    #gROOT.ProcessLine(".include /shome/ineuteli/analysis/CMSSW_10_3_3/src/")
-#    #gSystem.Load("/shome/ineuteli/analysis/CMSSW_10_3_3/lib/slc6_amd64_gcc700/libHTTutilitiesJet2TauFakes.so")
-#    gROOT.Macro(modulepath+'/fakeFactor/fakeFactor.C+O')
-#    from ROOT import loadFakeFactors, setFakeFactorFractions, getFakeFactorSysIndex
-#    import atexit
-#    atexit.register(closeFakeFactor)
-#  #gROOT.Macro('PlotTools/leptonTauFake/leptonTauFake.C+')
-#  #gROOT.Macro('PlotTools/lepEff/lepEff.C+')
-#  #gROOT.Macro('PlotTools/Zpt/zptweight.C+')
-#  #gROOT.Macro('PlotTools/pileup/pileup.C+')
-#  #gROOT.Macro("prefire/prefireAnalysis.C+")
-
 
 class SampleSet(object):
   """Collect samples into one set to draw histgrams from trees for data/MC comparisons,
@@ -74,20 +51,21 @@ class SampleSet(object):
     """Returns string representation of Sample object."""
     return ', '.join(repr(s.name) for s in [self.datasample]+self.mcsamples if s)
   
-  def printobjs(self,title=""):
+  def printobjs(self,title="",file=False):
     for sample in self.samples:
-      sample.printobjs(title="")
+      sample.printobjs(title="",file=file)
   
-  def printtable(self,title=None):
+  def printtable(self,title=None,merged=True,split=True):
     """Print table of all samples."""
     import TauFW.Plotter.sample.utils as GLOB
     if not title:
-      print ">>>\n>>> Samples with integrated luminosity L = %s / fb at sqrt(s) = 13 TeV"%(GLOB.lumi)
-    justname  = 8+max(len(s.name) for s in self.samples)
-    justtitle = 3+max(len(s.title) for s in self.samples)
-    Sample.printheader(title,justname=justname,justtitle=justtitle)
+      name = self.name+" samples" if self.name else "Samples"
+      print ">>>\n>>> %s with integrated luminosity L = %s / fb at sqrt(s) = 13 TeV"%(name,GLOB.lumi)
+    justname  = 2+max(s.get_max_name_len() for s in self.samples)
+    justtitle = 2+max(s.get_max_title_len() for s in self.samples)
+    Sample.printheader(title,justname=justname,justtitle=justtitle,merged=merged)
     for sample in self.samples:
-      sample.printrow(justname=justname,justtitle=justtitle)
+      sample.printrow(justname=justname,justtitle=justtitle,merged=merged,split=split)
     print ">>> "
   
   def __iter__(self):
@@ -283,7 +261,7 @@ class SampleSet(object):
          print ">>> plotstack: ignoring %s for %s"%(var.printbins(),selection) #.title
          invariables.remove(var)
          continue
-      var.changecontext(selection,self.channel) #.selection
+      var.changecontext(selection.selection,self.channel)
     return invariables, selection, issingle
   
   def getstack(self, *args, **kwargs):
@@ -320,7 +298,7 @@ class SampleSet(object):
         stacks[stack] = var
     return stacks # dictionary: THStack -> Variable
   
-  def getdata(self, *args, **kwargs):
+  def getdatahist(self, *args, **kwargs):
     """Create and fill histograms of background simulations and make a stack."""
     name   = kwargs.get('name',"data")
     kwargs.update({'data':True, 'mc':False, 'signal':False, 'exp':False})
@@ -331,8 +309,10 @@ class SampleSet(object):
   def gethists(self, *args, **kwargs):
     """Create and fill histograms for all samples and return lists of histograms."""
     verbosity     = LOG.getverbosity(kwargs)
+    if verbosity>=1:
+      print ">>> gethists"
     variables, selection, issingle = unwrap_gethist_args(*args)
-    datavars      = filter(lambda v: v.data,variables)      # filter out gen-level variables
+    datavars      = filter(lambda v: v.data,variables)    # filter out gen-level variables
     dodata        = kwargs.get('data',          True    ) # create data hists
     domc          = kwargs.get('mc',            True    ) # create expected (SM background) hists
     doexp         = kwargs.get('exp',           domc    ) # create expected (SM background) hists
@@ -348,6 +328,7 @@ class SampleSet(object):
     tag           = kwargs.get('tag',           ""      )
     method        = kwargs.get('method',        None    ) # data-driven method; 'QCD_OSSS', 'QCD_ABCD', 'JTF', 'FakeFactor', ...
     imethod       = kwargs.get('imethod',       -1      ) # position on list; -1 = last (bottom of stack)
+    filters       = kwargs.get('filter',        None    ) or [ ] # filter these samples
     vetoes        = kwargs.get('veto',          None    ) or [ ] # filter out these samples
     #makeJTF       = kwargs.get('JTF',           False   ) and data
     #nojtf         = kwargs.get('nojtf',         makeJTF ) and data
@@ -362,27 +343,24 @@ class SampleSet(object):
     task          = kwargs.get('task',          "Creating histograms" ) # task title for loading bar
     #saveto        = kwargs.get('saveto',        ""     ) # save to TFile
     #file          = createFile(saveto,text=cuts) if saveto else None
+    filters       = ensurelist(filters)
     vetoes        = ensurelist(vetoes)
     if method and not hasattr(self,method):
-      ensuremodule(method,'Plotter.methods')
+      ensuremodule(method,'Plotter.methods') # load SampleSet class method
     
     # FILTER
     samples = [ ]
-    if split:
-      for sample in self.samples:
-        if not dosignal and sample.issignal: continue
-        if not dodata   and sample.isdata:   continue
-        if vetoes and sample.match(*vetoes): continue
-        if sample.splitsamples:
-          samples += sample.splitsamples
-        else:
-          samples.append(sample)
-    else:
-      for sample in self.samples:
-        if not dosignal and sample.issignal: continue
-        if not dodata   and sample.isdata:   continue
-        if vetoes and sample.match(*vetoes): continue
-        samples.append(sample)
+    for sample in self.samples:
+      if not dosignal and sample.issignal: continue
+      if not dodata   and sample.isdata:   continue
+      if split and sample.splitsamples:
+        subsamples = sample.splitsamples
+      else:
+        subsamples = [sample] # sample itself
+      for subsample in subsamples:
+        if filters and not subsample.match(*filters): continue
+        if vetoes  and subsample.match(*vetoes): continue
+        samples.append(subsample)
     #if nojtf:
     #  samples = [s for s in samples if not ((not keepWJ and s.match('WJ',"W*J","W*j")) or "gen_match_2==6" in s.cuts or "genPartFlav_2==0" in s.cuts)]
     
@@ -393,6 +371,9 @@ class SampleSet(object):
     sigkwargs  = { 'tag':tag, 'weight': weight, 'replaceweight': replaceweight, 'verbosity': verbosity, 'scaleup': scaleup }
     datakwargs = { 'tag':tag, 'weight': dataweight, 'verbosity': verbosity, 'blind': blind, 'parallel': parallel }
     result     = HistSet(variables,dodata,doexp,dosignal) # container for dictionaries of histogram (list): data, exp, signal
+    if not variables:
+      LOG.warning("Sample.gethists: No variables to make histograms for...")
+      return result
     
     # PRINT
     bar = None
@@ -482,21 +463,22 @@ class SampleSet(object):
     if verbosity>=2 and len(variables)>0:
       var = variables[0]
       print ">>> selection:"
-      print ">>>  '%s'"%(selection) #.selection
+      print ">>>  %r"%(selection.selection)
       print ">>> yields: "
-      print ">>> %11s %11s    %s"%("integral","entries","hist name")
+      TAB = LOG.table("%11.1f %11.2f    %r")
+      TAB.printheader("entries","integral","hist name")
       totint = 0
       totent = 0
       if dodata:
-        print ">>> %11.2f %11.1f    %r"%(result.data[var].Integral(),result.data[var].GetEntries(),result.data[var].GetName())
+        TAB.printrow(result.data[var].Integral(),result.data[var].GetEntries(),result.data[var].GetName())
       for hist in result.exp[var]:
         totint += hist.Integral()
         totent += hist.GetEntries()
-        print ">>> %11.2f %11.1f    %r"%(hist.Integral(),hist.GetEntries(),hist.GetName())
-      print ">>> %11.2f %11.1f    %s"%(totint,totent,"total exp.")
+        TAB.printrow(hist.Integral(),hist.GetEntries(),hist.GetName())
+      TAB.printrow(totint,totent,"total exp.")
       if dosignal:
         for hist in result.signal[var]:
-          print ">>> %11.2f %11.1f    '%r'"%(hist.Integral(),hist.GetEntries(),hist.GetName())
+          TAB.printrow(hist.Integral(),hist.GetEntries(),hist.GetName())
     
     if issingle:
       result.setsingle()
@@ -505,7 +487,7 @@ class SampleSet(object):
   
   def gethists2D(self, *args, **kwargs):
     """Create and fill histograms for all samples and return lists of histograms."""
-    variables, selection, issingle = unwrap_gethist_args_2D(*args)
+    variables, selection, issingle = unwrap_gethist2D_args(*args)
     verbosity  = LOG.getverbosity(kwargs)
     dodata     = kwargs.get('data',       True     ) # create data hists
     domc       = kwargs.get('mc',         True     ) # create expected (SM background) hists
@@ -525,6 +507,9 @@ class SampleSet(object):
     sigkwargs  = { 'tag':tag, 'weight': weight, 'verbosity': verbosity }
     datakwargs = { 'tag':tag, 'weight': dataweight, 'verbosity': verbosity }
     result     = HistSet(variables,dodata,doexp,dosignal)
+    if not variables:
+      LOG.warning("Sample.gethists: No variables to make histograms for...")
+      return result
     
     # FILTER
     samples = [ ]
@@ -601,8 +586,8 @@ class SampleSet(object):
   def getexp(self,*searchterms,**kwargs):
     return getsample_with_flag(self.expsamples,'isexp',*searchterms,**kwargs)
   
-  def getmc(self,*searchterms,**kwargs):
-    return getsample_with_flag(self.mcsamples,'ismc',*searchterms,**kwargs)
+  #def getmc(self,*searchterms,**kwargs):
+  #  return getsample_with_flag(self.mcsamples,'ismc',*searchterms,**kwargs)
   
   def getsignal(self,*searchterms,**kwargs):
     return getsample_with_flag(self.sigsamples,'issignal',*searchterms,**kwargs)
@@ -623,6 +608,19 @@ class SampleSet(object):
       self.samples.remove(sample)
     self.samples.insert(oldindex,mergedsample)
   
+  def rename(self,*args,**kwargs):
+    """Rename sample, e.g. sampleset.rename('WJ','W')"""
+    LOG.insist(len(args)>=2,"SampleSet.rename: need more than two strings! Got %s"%(args,))
+    strings          = [arg for arg in args if isinstance(arg,str)]
+    searchterms      = strings[:-1]
+    name             = strings[-1]
+    kwargs['unique'] = True
+    sample           = self.get(*searchterms,**kwargs)
+    if sample:
+      sample.name    = name
+    else:
+      LOG.warning("SampleSet.rename: Could not find sample with searchterms '%s'"%("', '").join(searchterms))
+  
   def split(self,*args,**kwargs):
     """Split sample into different components with some cuts, e.g.
       sampleset.split('DY',[
@@ -630,6 +628,8 @@ class SampleSet(object):
          ('ZJ', "Fake tau","genmatch_2!=5"),
       ])
     """
+    verbosity        = LOG.getverbosity(kwargs)
+    LOG.verbose("split: splitting %s"%(self.name),verbosity,1)
     searchterms      = [arg for arg in args if isinstance(arg,str)]
     splitlist        = [arg for arg in args if islist(arg)        ][0]
     kwargs['unique'] = True
@@ -637,53 +637,61 @@ class SampleSet(object):
     if sample:
       sample.split(splitlist,**kwargs)
     else:
-      LOG.warning('SampleSet.split - Could not find sample with searchterms "%s"'%('", "').join(searchterms))
+      LOG.warning("SampleSet.split: Could not find sample with searchterms '%s'"%("', '").join(searchterms))
   
-  def shift(self,searchterms,file_app,title_app,**kwargs):
+  def shift(self,searchterms,filetag,nametag=None,titletag=None,**kwargs):
     """Shift samples in samples set by creating new samples with new filename/titlename."""
-    filter          = kwargs.get('filter',      False       ) # filter other samples
-    share           = kwargs.get('share',       False       ) # share other samples (as opposed to cloning them)
-    title_tag       = kwargs.get('title_tag',   False       )
-    title_veto      = kwargs.get('title_veto',  False       )
-    close           = kwargs.get('close',       False       )
-    kwargs.setdefault('name',      file_app.lstrip('_')     )
-    kwargs.setdefault('label',     file_app                 )
+    verbosity     = LOG.getverbosity(kwargs)
+    LOG.verb("Sample.shift(%r,%r,%r)"%(searchterms,filetag,titletag),verbosity,1)
+    filter        = kwargs.get('filter',      False       ) # filter non-matched samples out
+    share         = kwargs.get('share',       False       ) # reduce memory by sharing non-matched samples (as opposed to cloning)
+    split         = kwargs.get('split',       False       ) # also look in split samples
+    close         = kwargs.get('close',       False       )
+    kwargs.setdefault('name',      filetag.lstrip('_')      )
+    kwargs.setdefault('label',     filetag                  )
     kwargs.setdefault('channel',   self.channel             )
-    searchterms     = ensurelist(searchterms)
-    all             = searchterms==['*']
-    datasample      = None
-    expsamples      = [ ]
-    sigsamples      = [ ]
-    sharedsamples   = [ ]
-    for sample in self.expsamples:
-      if all or sample.match(*searchterms,incl=False):
-        newsample = sample.clone(samename=True,deep=True)
-        newsample.appendFileName(file_app,title_app=title_app,title_veto=title_veto)
-        if close: newsample.close()
-        expsamples.append(newsample)
-      elif not filter:
-        newsample = sample if share else sample.clone(samename=True,deep=True,close=True)
-        expsamples.append(newsample)
-        if share: sharedsamples.append(newsample)
-    for sample in self.sigsamples:
-      if all or sample.match(*searchterms,incl=False):
-        newsample = sample.clone(samename=True,deep=True)
-        newsample.appendFileName(file_app,title_app=title_app,title_veto=title_veto)
-        if close: newsample.close()
-        sigsamples.append(newsample)
-      elif not filter:
-        newsample = sample if share else sample.clone(samename=True,deep=True,close=True)
-        sigsamples.append(newsample)
-        if share: sharedsamples.append(newsample)
+    searchterms   = ensurelist(searchterms)
+    all           = searchterms==['*']
+    datasample    = None
+    expsamples    = [ ]
+    sigsamples    = [ ]
+    sharedsamples = [ ]
+    def appendfilename(sample_):
+      """Help function to append filename for a single sample."""
+      newsample = sample_.clone(samename=True,deep=True)
+      newsample.appendfilename(filetag,nametag,titletag,verb=verbosity)
+      if close:
+        newsample.close()
+      return newsample
+    for oldsamples, newsamples in [(self.expsamples,expsamples),(self.sigsamples,sigsamples)]:
+      for sample in oldsamples:
+        newsample = None
+        if all or sample.match(*searchterms,incl=True):
+          newsample = appendfilename(sample)
+        elif split and any(s for s in sample.splitsamples if s.match(*searchterms,incl=True)):
+          newsample = sample.clone(samename=True,deep=True)
+          for i, subsample in enumerate(newsample.splitsamples[:]):
+            if subsample.match(*searchterms,incl=True):
+              newsample.splitsamples[i] = appendfilename(subsample)
+            elif share:
+              newsubsample = newsample.splitsamples[i]
+              newsample.splitsamples[i] = sample.splitsamples[i]
+              newsubsample.close()
+        if newsample==None and not filter:
+          newsample = sample if share else sample.clone(samename=True,deep=True,close=True)
+          if share:
+            sharedsamples.append(newsample)
+        if newsample!=None:
+          newsamples.append(newsample)
     if not filter:
-        datasample = self.datasample
-        sharedsamples.append(datasample)
+      datasample = self.datasample
+      sharedsamples.append(datasample)
     kwargs['shared'] = sharedsamples
     newset = SampleSet(datasample,expsamples,sigsamples,**kwargs)
     newset.closed = close
     return newset
   
-  def shiftweight(self,searchterms,newweight,title_app,**kwargs):
+  def shiftweight(self,searchterms,newweight,titletag="",**kwargs):
     """Shift samples in samples set by creating new samples with new weight."""
     filter          = kwargs.get('filter',      False       ) # filter other samples
     share           = kwargs.get('share',       False       ) # share other samples (as opposed to cloning them)
@@ -698,9 +706,9 @@ class SampleSet(object):
         newsample = sample.clone(samename=True,deep=True)
         #LOG.verbose('SampleSet.shiftweight: "%s" - weight "%s", extra weight "%s"'%(newsample.name,newsample.weight,newsample.extraweight),1)
         if extra:
-          newsample.setExtraWeight(newweight)
+          newsample.setextraweight(newweight)
         else:
-          newsample.addWeight(newweight)
+          newsample.addweight(newweight)
         #LOG.verbose('SampleSet.shiftweight: "%s" - weight "%s", extra weight "%s"'%(newsample.name,newsample.weight,newsample.extraweight),1)
         expsamples.append(newsample)
       elif not filter:
@@ -710,9 +718,9 @@ class SampleSet(object):
       if sample.match(*searchterms,incl=False):
         newsample = sample.clone(samename=True,deep=True)
         if extra:
-          newsample.setExtraWeight(newweight)
+          newsample.setextraweight(newweight)
         else:
-          newsample.addWeight(newweight)
+          newsample.addweight(newweight)
         sigsamples.append(newsample)
       elif not filter:
         newsample = sample if share else sample.clone(samename=True,deep=True)

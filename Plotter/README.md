@@ -18,6 +18,7 @@
   * [Splitting samples](#Splitting-samples)<br>
   * [Data/MC plots](#DataMC-plots)<br>
   * [Data-driven methods](#Data-driven-methods)<br>
+* [Plotting script](#Plotting-script)<br>
 
 
 ## Installation
@@ -91,9 +92,11 @@ title (e.g. `Leading p_{T} [GeV]`) and the binning (`nbins,xmin,xmax` or a list 
 ```
 from TauFW.Plotter.plot.Variable import Variable
 variables = [
-  Variable('pt_1',  "p_{T} [GeV]",   40, 0,200),
-  Variable('m_vis', "m_{vis} [GeV]", [0,20,40,50,60,65,70,75,80,85,90,100,120,150]),
+  Variable('pt_1',  "p_{T}",   40, 0,200),
+  Variable('m_vis', "m_{vis}", [0,20,40,50,60,65,70,75,80,85,90,100,120,150]),
   Variable('njets', "Number of jets", 8, 0,  8),
+  Variable('nbtag', "Number of b jets", 8, 0,  8, weight="btagweight"),
+  Variable('pt_1+pt_2+jpt_1', "S_{T}", 40, 0, 800, cut="jpt_1>50", fname="ST"),
 ]
 ```
 A `Variable` object can contain a lot of information, passed as key-word arguments that are
@@ -124,17 +127,22 @@ A [`Sample`](python/sample/Sample.py) class is provided to contain and interface
 It keeps track of a sample's information like title (for legends), filename, cross section, normalization, etc.
 To initialize, you need to pass a unique name, a title (for legends) and a filename:
 ```
-sample = Sample("TT,"t#bar{t}","TT_mutau.root",831.76)
+sample = Sample("TT","t#bar{t}","TT_mutau.root",831.76)
 ```
-The fourth argument can be a float that will be used to compute the normalization to
-the integrated luminosity times cross section. The total number of events will automatically
-be taken from the [`'cutflow'` histogram](../PicoProducer/python/analysis/#Cutflow) if it exists,
-otherwise pass it directly with `nevts` (total, raw number of MC events) or `sumw` (sum of generator weights).
+The fourth argument can be a float that is the cross section (in units of pb).
+It will be used by `Sample.normalize` to compute the normalization to the integrated luminosity times cross section as
+```
+norm = lumi*xsec*1000/sumw
+```
+if the total sum of weights, `sumw`, of all MC samples is given, otherwise the total number of MC events `nevts` is used.
+The total number of events and total sum of weights will automatically be taken from the
+[`'cutflow'` histogram](../PicoProducer/python/analysis/#Cutflow) if it exists,
+otherwise, the user should pass it directly with `nevts` or `sumw`:
 ```
 sample = Sample("TT,"t#bar{t}","TT_mutau.root",831.76,nevts=76915549,lumi=59.7)
 ```
-Instead of passing the integrated luminosity with `lumi` to `Sample`, you can set it globally
-(in [`python/sample/utils.py`](python/sample/utils.py)) by passing the era like this:
+Instead of passing the integrated luminosity with `lumi` (in units of inverse fb) to `Sample`, you can set it globally
+in [`python/sample/utils.py`](python/sample/utils.py) by passing the era like this:
 ```
 from TauFW.Plotter.sample.utils as setera
 setera(2018)
@@ -156,10 +164,18 @@ hist = sample.gethist(var,"pt_1>30 && pt_2>30")
 ```
 To speed up things, it can create histograms in parallel with [`MultiDraw`](python/plot/MultiDraw.py):
 ```
+vars = [
+  Variable('m_vis', 40,0,200),
+  Variable('nbtags', 8,0,  8, weight="btagweight"),
+  Variable('jpt_1', 40,0,200, cut="abs(jeta_1)<2.5", title="Forward jet pt"),
+]
 hists = sample.gethist(vars,"pt_1>30 && pt_2>30")
 ```
 where `vars` is a list of variables as above, and the returned `hists` is a list of `TH1D`s.
 Similarly, `Sample.gethist2D` is available for 2D histograms (`TH2D`).
+With `Variable` objects, you can include extra cuts or weights that are variable-specific.
+In the example above, the `btagweight` weight will only be applied to `nbtags`,
+and the `jpt_1>0` cut only to `jpt_1`.
 
 ### Splitting
 You can also split samples into different components (e.g. real/misidentified, or decay mode)
@@ -188,15 +204,14 @@ STYLE.sample_colors['ZTT'] = kOrange-4
 STYLE.sample_titles['ZTT'] = "Z -> #tau#tau
 ```
 Some string patterns for axis titles and legend entries are automatically converted to LaTeX format
-by `makelatex` in [`python/plot/strings.py`](python/plot/strings.py). To disable use the `latex=False`
-option of the `Plot.draw`, `Plot.drawlegend` and , `Plot.drawtext` functions.
+by [`makelatex` in `python/plot/string.py`](python/plot/string.py). To disable this, pass the `latex=False`
+option to the `Plot.draw`, `Plot.drawlegend` and , `Plot.drawtext` functions.
 
 <p align="center">
   <img src="../docs/testStyle_legend.png" alt="Legend with common SM processes" width="220" hspace="10"/>
   <img src="../docs/testStyle_legend_split.png" alt="Legend with some processes split" width="220" hspace="10"/>
   <img src="../docs/testStyle_legend_DMs.png" alt="Legend with Z -> tautau split into decay modes" width="200"/>
 </p>
-
 
 
 ## Sample set
@@ -226,7 +241,7 @@ Here, `expsamples` is a list of python tuples:
   ( GROUP, SAMPLE, TITLE, XSEC )
 ```
 To pass special options via keywords, use an extra dictionary.
-Here, `GROUP` and sample name `SAMPLE` correspond to what was used during [`pico` production](../PicoProducer#Samples).
+Here, group name `GROUP` and sample name `SAMPLE` correspond to what was used during [`pico` production](../PicoProducer#Samples).
 Data is a single tuple:
 ```
   ( GROUP, SAMPLE, TITLE )
@@ -242,7 +257,9 @@ By default, `getsampleset` will automatically assume the samples can be found vi
 ```
 where `PICODIR` will be retrieved from the [`PicoProducer` config file](../PicoProducer#Configuration).
 You can instead specify to `getsampleset` the file name pattern with the keyword `file`.
-To get an overview of the samples, use`
+With the keyword option `url` you can pass a `XRootD` url that will be prepended to this pattern.
+
+To get an overview of the samples, use
 ```
 sampleset.printtable()
 >>> Samples with integrated luminosity L = 35.9 / fb at sqrt(s) = 13 TeV
@@ -259,12 +276,7 @@ sampleset.printtable()
 >>> WJetsToLNu                 W + jets                    50260.00   86413370.0   86411825.00     1.000  
 >>> TT                         ttbar                         831.76   76915549.0   76914152.00     0.388  ttptweight
 ```
-The lumi-cross section normalization is given by the `norm` column. This should be computed as
-```
-norm = lumi*xsec*1000/sumweights
-```
-if `sumweights` is given, otherwise total number of MC events `nevents` is used.
-These numbers are grabbed from [the cutflow histogram as described above](#Sample).
+The luminosity-cross section normalization is given by the `norm` column, which is [described above](#Sample).
 
 A full example is given in [`test/plotPico.py`](test/plotPico.py).
 This script assumes a complete list of 2016 `pico` ntuples in the [`mutau` channel](../PicoProducer/python/analysis/ModuleMuTau.py).
@@ -287,7 +299,7 @@ In the TauPOG, typically "jet-binned" samples of Drell-Yan (Z+jets) and W+jets a
 like `DY[1-4]JetsToLL_M-50*` or `W[1-4]JetsToLNu*`. (Here "jet" means number of LHE-level partons.)
 They increase the statistics, but overlap with their respective jet-inclusive sample.
 Therefore a special "stitching" procedure is needed that changes the effective
-lumi-cross section normalization per "jet-bin", before they are merged into one big sample.
+luminosity-cross section normalization per "jet-bin", before they are merged into one big sample.
 You can use the [`stitch` help function](python/sample/utils.py) to do it automatically:
 ```
 sampleset.stitch("W*Jets",   incl='WJ', name='WJ'                               )
@@ -408,3 +420,15 @@ stacks = samples.getstack(variables,selection,method='QCD_OSSS')
 This will load the file and make the method available.
 You can set the position of the new histogram in the stack via `imethod`,
 where `0` means on the top, and `-1` means on the bottom.
+
+
+## Plotting script
+An example of a plotting script is given by [`plot.py`](plot.py).
+It can be run for a given channel and era as
+```
+./plot.py -c mutau -y 2018
+```
+It will load a `SampleSet` from `config/samples.py`, which by default will look for pico samples in `$PICODIR`.
+You can edit the scripts and this config file to your specifications and liking.
+
+

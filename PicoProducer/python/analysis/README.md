@@ -30,7 +30,6 @@ pico.py run -c mutau -y 2016
 ```
 For more detailed instructions on `pico.py`, see the [README in the grandparent folder](../../#picoproducer).
 
-
 ### Hierarchy
 To run analysis modules with `pico.py`, the modules should always by in this directory (`python/analysis/`),
 but you can organize your modules in subdirectories, e.g.
@@ -40,6 +39,7 @@ pico.py channel mutau python/analysis/MyAnalysis/ModuleMyMuTau.py
 ```
 Furthermore, the module file should have the exact same name as the module class it contains,
 e.g. [`ModuleMuTau.py`](ModuleMuTau.py) contains `ModuleMuTau`.
+
 
 ## Accessing nanoAOD
 Please refer to the [nanoAOD documentation](https://cms-nanoaod-integration.web.cern.ch/integration/master-102X/mc102X_doc.html)
@@ -145,13 +145,22 @@ class ModuleMuTauSimple(Module):
     self.outfile.Write()
     self.outfile.Close()
 ```
-More information on data types:
-* In `ROOT`: https://root.cern.ch/doc/master/classTTree.html#addcolumnoffundamentaltypes
-* In `numpy`: https://numpy.org/devdocs/user/basics.types.html
-
 <p align="center">
   <img src="../../../docs/file_pico_mutau_simple.png" alt="Pico file of ModuleMuTauSimple" width="700"/>
 </p>
+
+More information on data types for defining the right numpy arrays and branches:
+* In `ROOT`: https://root.cern.ch/doc/master/classTTree.html#addcolumnoffundamentaltypes
+* In `numpy`: https://numpy.org/devdocs/user/basics.types.html
+
+| ROOT      | [Branch](https://root.cern.ch/doc/master/classTTree.html#addcolumnoffundamentaltypes) | [`numpy`](https://numpy.org/devdocs/user/basics.types.html) | [`array`](https://docs.python.org/3/library/array.html) | Data type |
+|-----------|----------|-----------------------------|----------|--------------------------|
+| Bool_t    | `'O'`    | `'?'`, `'bool'`, `bool`     |          |   8-bit boolean          |
+| UChar_t   | `'b'`    | `'b'`, `'byte'`, `'int8'`   | `'B'`    |   8-bit unsigned integer |
+| Int_t     | `'I'`    | `'i'`, `'int32'`            | `'l'`    |  32-bit (signed) integer |
+| Long64_t  | `'L'`    | `'l'`, `'int62'`, `long`    | `'q'`    |  64-bit (signed) integer |
+| Float_t   | `'F'`    | `'f'`, `'float32'`          | `'f'`    |  32-bit float            |
+| Double_t  | `'D'`    | `'d'`, `'float64'`, `float` | `'d'`    |  64-bit float            |
 
 To make your life easier, you can use separate "tree producer" classes.
 For example, [`TreeProducer`](TreeProducer.py) can be subclassed as in [`TreeProducerMuTau.py`](TreeProducerMuTau.py).
@@ -181,15 +190,17 @@ class ModuleMuTau(Module):
 
 
 ## Cutflow
-To keep track of efficiencies of each pre-selection, one should use a cuflow.
+To keep track of the total number of processed events,
+and efficiencies of each step in the pre-selection, one should use a cuflow.
 This is a simple histogram, binned per integer, that is filled each time a pre-selection is passed.
 Again, [`ModuleMuTauSimple.py`](ModuleMuTauSimple.py) provides a straightforward solution.
 
 The [`TreeProducer`](TreeProducer.py) class already uses a special `Cutflow` class,
 that can be used as
 ```
-class ModuleMuTau(ModuleTauPair):
+class ModuleMuTau(Module):
   def __init__(self, fname, **kwargs):
+    self.out = TreeProducer(fname,self)
     self.out.cutflow.addcut('none',  "no cut"   ) # bin 1 (0-1): total number of events
     self.out.cutflow.addcut('trig',  "trigger"  ) # bin 2 (1-2): number of events passing the trigger
     self.out.cutflow.addcut('muon',  "muon"     ) # bin 3 (2-3): number of events with pre-selected muon
@@ -207,12 +218,14 @@ class ModuleMuTau(ModuleTauPair):
     return True
 ```
 Note that if the generator weight in MC is very different than 1.0 (e.g. for some ttbar samples),
-it can be useful to save the total sum of weights for the denominator in lumi-cross section normalization,
+it can be useful to save the total sum of weights of all processed events,
+so it can be used in the denominator of the lumi-cross section normalization,
 instead of using the total number of MC events.
 
 <p align="center">
   <img src="../../../docs/cutflow.png" alt="Cutflow (mutau)" width="600"/>
 </p>
+
 
 ## Tau pair analysis
 A set of full analysis modules for the basic study of events with a pair of tau decay candidates
@@ -222,14 +235,23 @@ They follow this hierarchy:
   * [`TreeProducerTauPair`](TreeProducerTauPair.py) provides common branches in ditau analyses
     * [`TreeProducerMuTau`](TreeProducerMuTau.py) for the mutau channel
     * [`TreeProducerETau`](TreeProducerETau.py) for the etau channel
-    * ...
+    * [`TreeProducerTauTau`](TreeProducerTauTau.py) for the tautau channel
+    * [`TreeProducerMuMu`](TreeProducerMuMu.py) for the mumu channel
+    * [`TreeProducerEMu`](TreeProducerEMu.py) for the emu channel
 * [`Module`](https://github.com/cms-nanoAOD/nanoAOD-tools/blob/master/python/postprocessing/framework/eventloop.py): general superclass for nanoAOD processing
-  * [`ModuleTauPair`](ModuleTauPair.py) provides common routines like jet selection or ditau reconstruction (`m_vis`, `dR_ll`, etc.)
+  * [`ModuleTauPair`](ModuleTauPair.py) provides common routines like jet selection or ditau reconstruction (`mt`, `m_vis`, `dR_ll`, etc.)
     * [`ModuleMuTau`](ModuleMuTau.py) for the mutau channel
     * [`ModuleETau`](ModuleETau.py) for the etau channel
-    * ...
+    * [`ModuleTauTau`](ModuleTauTau.py) for the tautau channel
+    * [`ModuleMuMu`](ModuleMuMu.py) for the mumu channel
+    * [`ModuleEMu`](ModuleEMu.py) for the emu channel
 
 (Note they are still under construction, and more will be added in the near future.)
+
+<p align="center">
+  <img src="../../../docs/tautau_decay_pie.png" alt="Pie chart of the decay channels of a tau lepton pair" width="240"/>
+</p>
+
 
 ## Corrections
 Correction tools are found in [`python/corrections/`](../corrections) and

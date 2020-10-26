@@ -4,7 +4,7 @@ from math import sqrt, sin, cos, pi
 from itertools import combinations
 from ROOT import TH1D, TLorentzVector
 from TauFW.PicoProducer import basedir
-from TauFW.common.tools.utils import convertstr # for picojob.py
+from TauFW.common.tools.utils import getyear, convertstr # for picojob.py
 from TauFW.common.tools.file import ensurefile
 from TauFW.common.tools.file import ensuremodule as _ensuremodule
 from TauFW.common.tools.log import Logger
@@ -14,13 +14,17 @@ LOG = Logger('Analysis')
 
 def ensuremodule(modname):
   """Check if module exists and has class of same name."""
+  if ' ' in modname:
+    modname = modname.split(' ')[0]
   return _ensuremodule(modname,"PicoProducer.analysis")
   
 
 def getmodule(modname):
   """Get give module from python module in python/analysis of the same name."""
-  module   = ensuremodule(modname)
-  modclass = modname.split('.')[-1]
+  if ' ' in modname:
+    modname = modname.split(' ')[0]
+  module   = ensuremodule(modname)  # e.g. PicoProducer.analysis.ModuleMuTau
+  modclass = modname.split('.')[-1] # e.g. ModuleMuTau
   return getattr(module,modclass)
   
 
@@ -97,16 +101,17 @@ def deltaPhi(phi1, phi2):
   return res
   
 
-def getmet(year,var=""):
+def getmet(era,var="",verb=0):
   """Return year-dependent MET recipe."""
-  branch  = 'METFixEE2017' if year==2017 else 'MET'
+  branch  = 'METFixEE2017' if ('2017' in era and 'UL' not in era) else 'MET'
   pt      = '%s_pt'%(branch)
   phi     = '%s_phi'%(branch)
   if var:
     pt   += '_'+var
     phi  += '_'+var
   funcstr = "func = lambda e: TLorentzVector(e.%s*cos(e.%s),e.%s*sin(e.%s),0,e.%s)"%(pt,phi,pt,phi,pt)
-  #print funcstr
+  if verb>=1:
+    LOG.verb(">>> getmet: %r"%(funcstr))
   exec funcstr #in locals()
   return func
   
@@ -118,23 +123,40 @@ def correctmet(met,dp):
   return met
   
 
-def getmetfilters(year,isData):
+def getmetfilters(era,isdata,verb=0):
   """Return a method to check if an event passes the recommended MET filters."""
   # https://twiki.cern.ch/twiki/bin/viewauth/CMS/MissingETOptionalFiltersRun2
-  if year in [2017,2018]:
-    if isData:
-      return lambda e: e.Flag_goodVertices and e.Flag_globalSuperTightHalo2016Filter and e.Flag_HBHENoiseFilter and e.Flag_HBHENoiseIsoFilter and\
-                       e.Flag_EcalDeadCellTriggerPrimitiveFilter and e.Flag_BadPFMuonFilter and e.Flag_eeBadScFilter and e.Flag_ecalBadCalibFilterV2
-    else:
-      return lambda e: e.Flag_goodVertices and e.Flag_globalSuperTightHalo2016Filter and e.Flag_HBHENoiseFilter and e.Flag_HBHENoiseIsoFilter and\
-                       e.Flag_EcalDeadCellTriggerPrimitiveFilter and e.Flag_BadPFMuonFilter and e.Flag_ecalBadCalibFilterV2 # eeBadScFilter "not suggested"
-  else:
-    if isData:
-      return lambda e: e.Flag_goodVertices and e.Flag_globalSuperTightHalo2016Filter and e.Flag_HBHENoiseFilter and e.Flag_HBHENoiseIsoFilter and\
-                       e.Flag_EcalDeadCellTriggerPrimitiveFilter and e.Flag_BadPFMuonFilter and e.Flag_eeBadScFilter
-    else:
-      return lambda e: e.Flag_goodVertices and e.Flag_globalSuperTightHalo2016Filter and e.Flag_HBHENoiseFilter and e.Flag_HBHENoiseIsoFilter and\
-                       e.Flag_EcalDeadCellTriggerPrimitiveFilter and e.Flag_BadPFMuonFilter # eeBadScFilter "not suggested"
+  #if '2017' in era or '2018' in era:
+  #  if isdata:
+  #    return lambda e: e.Flag_goodVertices and e.Flag_globalSuperTightHalo2016Filter and e.Flag_HBHENoiseFilter and e.Flag_HBHENoiseIsoFilter and\
+  #                     e.Flag_EcalDeadCellTriggerPrimitiveFilter and e.Flag_BadPFMuonFilter and e.Flag_eeBadScFilter and e.Flag_ecalBadCalibFilterV2
+  #  else:
+  #    return lambda e: e.Flag_goodVertices and e.Flag_globalSuperTightHalo2016Filter and e.Flag_HBHENoiseFilter and e.Flag_HBHENoiseIsoFilter and\
+  #                     e.Flag_EcalDeadCellTriggerPrimitiveFilter and e.Flag_BadPFMuonFilter and e.Flag_ecalBadCalibFilterV2 # eeBadScFilter "not suggested"
+  #else:
+  #  if isdata:
+  #    return lambda e: e.Flag_goodVertices and e.Flag_globalSuperTightHalo2016Filter and e.Flag_HBHENoiseFilter and e.Flag_HBHENoiseIsoFilter and\
+  #                     e.Flag_EcalDeadCellTriggerPrimitiveFilter and e.Flag_BadPFMuonFilter and e.Flag_eeBadScFilter
+  #  else:
+  #    return lambda e: e.Flag_goodVertices and e.Flag_globalSuperTightHalo2016Filter and e.Flag_HBHENoiseFilter and e.Flag_HBHENoiseIsoFilter and\
+  #                     e.Flag_EcalDeadCellTriggerPrimitiveFilter and e.Flag_BadPFMuonFilter # eeBadScFilter "not suggested"
+  filters = [
+    'Flag_goodVertices',
+    'Flag_globalSuperTightHalo2016Filter',
+    'Flag_HBHENoiseFilter',
+    'Flag_HBHENoiseIsoFilter',
+    'Flag_EcalDeadCellTriggerPrimitiveFilter',
+    'Flag_BadPFMuonFilter',
+  ]
+  if isdata:
+    filters.extend(['Flag_eeBadScFilter']) # eeBadScFilter "not suggested" for MC
+  if ('2017' in era or '2018' in era) and ('UL' not in era):
+    filters.extend(['Flag_ecalBadCalibFilterV2']) # under review for change in Ultra Legacy
+  funcstr = "func = lambda e: e."+' and e.'.join(filters)
+  if verb>=1:
+    LOG.verb(">>> getmetfilters: %r"%(funcstr))
+  exec funcstr #in locals()
+  return func
   
 
 def loosestIso(tau):
@@ -153,7 +175,34 @@ def idIso(tau):
   return 0 if raw>4.5 else 1 if raw>3.5 else 3 # VVLoose, VLoose
   
 
-def getLeptonVetoes(event, electrons, muons, taus, channel):
+def matchgenvistau(event,tau,dRmin=0.5):
+  """Help function to match tau object to gen vis tau."""
+  # TO CHECK: taumatch.genPartIdxMother==tau.genPartIdx ?
+  taumatch = None
+  for genvistau in Collection(event,'GenVisTau'):
+    dR = genvistau.DeltaR(tau)
+    if dR<dRmin:
+      dRmin    = dR
+      taumatch = genvistau
+  if taumatch:
+    return taumatch.pt, taumatch.eta, taumatch.phi, taumatch.status
+  else:
+    return -1, -9, -9, -1
+  
+
+def matchtaujet(event,tau,ismc):
+  """Help function to match tau object to (gen) jet."""
+  jpt_match    = -1
+  jpt_genmatch = -1
+  if tau.jetIdx>=0:
+    jpt_match = event.Jet_pt[tau.jetIdx]
+    if ismc:
+      if event.Jet_genJetIdx[tau.jetIdx]>=0:
+        jpt_genmatch = event.GenJet_pt[event.Jet_genJetIdx[tau.jetIdx]]
+  return jpt_match, jpt_genmatch
+
+
+def getlepvetoes(event, electrons, muons, taus, channel):
   """Check if event has extra electrons or muons. (HTT definitions.)"""
   # https://twiki.cern.ch/twiki/bin/viewauth/CMS/HiggsToTauTauWorkingLegacyRun2#Common_lepton_vetoes
   

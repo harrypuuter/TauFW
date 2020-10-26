@@ -1,13 +1,14 @@
 #! /usr/bin/env python
 # Author: Izaak Neutelings (May 2020)
-# Description: Skim
+# Description: Skim nanoAOD file and store locally: pre-select events, filter branches, add jet/MET corrections, ...
+from __future__ import print_function
 import os, re
 import time; time0 = time.time()
 import ROOT; ROOT.PyConfig.IgnoreCommandLineOptions = True
 from PhysicsTools.NanoAODTools.postprocessing.framework.postprocessor import PostProcessor
-from TauFW.PicoProducer.analysis.utils import getmodule, convertstr
-from TauFW.PicoProducer.processors import moddir
-#from TauFW.PicoProducer.corrections.era_config import getjson, getera, getjmecalib
+from TauFW.PicoProducer.analysis.utils import getmodule, getyear, convertstr
+from TauFW.PicoProducer.processors import moddir, ensuredir
+from TauFW.PicoProducer.corrections.era_config import getjson
 from argparse import ArgumentParser
 parser = ArgumentParser()
 parser.add_argument('-i', '--infiles',  dest='infiles',   type=str, default=[ ], nargs='+')
@@ -21,12 +22,13 @@ parser.add_argument('-M', '--module',   dest='module',    type=str, default=None
 parser.add_argument('-c', '--channel',  dest='channel',   type=str, default=None)
 parser.add_argument('-E', '--opts',     dest='extraopts', type=str, default=[ ], nargs='+')
 parser.add_argument('-p', '--prefetch', dest='prefetch',  action='store_true', default=False)
+parser.add_argument('-v', '--verbose',  dest='verbosity', type=int, nargs='?', const=1, default=0, action='store' )
 args = parser.parse_args()
 
 
 # SETTING
-era       = args.era
-year      = int(re.findall(r"20\d{2}",era)[0] if era else 2018)
+era       = args.era # e.g. '2017', 'UL2017', ...
+year      = getyear(era) # integer year, e.g. 2017
 modname   = args.module
 channel   = args.channel
 if channel:
@@ -40,7 +42,7 @@ else:
     modname = "ModuleMuTauSimple"
   channel = modname
 dtype     = args.dtype
-outdir    = args.outdir
+outdir    = ensuredir(args.outdir)
 copydir   = args.copydir
 maxevts   = args.maxevts if args.maxevts>0 else None
 nfiles    = 1 if maxevts>0 else -1
@@ -50,6 +52,7 @@ if tag:
 outfname  = os.path.join(outdir,"pico_%s%s.root"%(channel,tag))
 url       = "root://cms-xrd-global.cern.ch/"
 prefetch  = args.prefetch
+verbosity = args.verbosity
 presel    = None #"Muon_pt[0] > 50"
 branchsel = os.path.join(moddir,"keep_and_drop_skim.txt")
 json      = None
@@ -59,8 +62,8 @@ modules   = [ ]
 infiles   = args.infiles or [
   #"data/DYJetsToLL_M-50_NanoAODv6.root",
   #"/afs/cern.ch/user/i/ineuteli/analysis/CMSSW_10_3_3/src/TauFW/PicoProducer/data/DYJetsToLL_M-50_NanoAODv6.root",
-  url+'/store/user/aakhmets/taupog/nanoAOD/DYJetsToLLM50_RunIIFall17MiniAODv2_PU2017RECOSIMstep_13TeV_MINIAOD_madgraph-pythia8_v1/67/myNanoProdMc2017_NANO_66.root',
-  url+'/store/user/aakhmets/taupog/nanoAOD/DYJetsToLLM50_RunIIFall17MiniAODv2_PU2017RECOSIMstep_13TeV_MINIAOD_madgraph-pythia8_v1/68/myNanoProdMc2017_NANO_67.root',
+  url+'root://cms-xrd-global.cern.ch//store/user/jbechtel/taupog/nanoAOD-v2/DYJetsToLLM50_RunIIFall17MiniAODv2_PU2017RECOSIMstep_13TeV_MINIAOD_madgraph-pythia8_ext1-v1/32/myNanoProdMc2017_NANO_31.root',
+  url+'root://cms-xrd-global.cern.ch//store/user/jbechtel/taupog/nanoAOD-v2/DYJetsToLLM50_RunIIFall17MiniAODv2_PU2017RECOSIMstep_13TeV_MINIAOD_madgraph-pythia8_ext1-v1/33/myNanoProdMc2017_NANO_32.root',
 ]
 if nfiles>0:
   infiles = infiles[:nfiles]
@@ -69,9 +72,11 @@ if dtype==None:
     dtype = 'data'
   else:
     dtype = 'mc'
+if dtype=='data':
+  json = getjson(era,dtype)
 
 # EXTRA OPTIONS
-kwargs    = { 'year': year, 'dtype': dtype, }
+kwargs = { 'era': era, 'year': year, 'dtype': dtype, 'verb': verbosity }
 for option in args.extraopts:
   assert '=' in option, "Extra option '%s' should contain '='! All: %s"%(option,args.extraopts)
   split       = option.split('=')
@@ -79,22 +84,23 @@ for option in args.extraopts:
   kwargs[key] = convertstr(val) # convert to bool, float or int if possible
 
 # PRINT
-print '-'*80
-print ">>> %-12s = %r"%('era',era)
-print ">>> %-12s = %r"%('channel',channel)
-print ">>> %-12s = %r"%('modname',modname)
-print ">>> %-12s = %r"%('dtype',dtype)
-print ">>> %-12s = %r"%('kwargs',kwargs)
-print ">>> %-12s = %s"%('maxevts',maxevts)
-print ">>> %-12s = %r"%('outdir',outdir)
-print ">>> %-12s = %r"%('copydir',copydir)
-print ">>> %-12s = %s"%('infiles',infiles)
-print ">>> %-12s = %r"%('outfname',outfname)
-print ">>> %-12s = %r"%('branchsel',branchsel)
-print ">>> %-12s = %r"%('json',json)
-print ">>> %-12s = %s"%('prefetch',prefetch)
-print ">>> %-12s = %s"%('cwd',os.getcwd())
-print '-'*80
+print('-'*80)
+print(">>> %-12s = %r"%('era',era))
+print(">>> %-12s = %r"%('year',year))
+print(">>> %-12s = %r"%('channel',channel))
+print(">>> %-12s = %r"%('modname',modname))
+print(">>> %-12s = %r"%('dtype',dtype))
+print(">>> %-12s = %r"%('kwargs',kwargs))
+print(">>> %-12s = %s"%('maxevts',maxevts))
+print(">>> %-12s = %r"%('outdir',outdir))
+print(">>> %-12s = %r"%('copydir',copydir))
+print(">>> %-12s = %s"%('infiles',infiles))
+print(">>> %-12s = %r"%('outfname',outfname))
+print(">>> %-12s = %r"%('branchsel',branchsel))
+print(">>> %-12s = %r"%('json',json))
+print(">>> %-12s = %s"%('prefetch',prefetch))
+print(">>> %-12s = %s"%('cwd',os.getcwd()))
+print('-'*80)
 
 # GET MODULE
 module = getmodule(modname)(outfname,**kwargs)
@@ -107,14 +113,14 @@ p.run()
 
 # COPY
 if copydir and outdir!=copydir:
-  print ">>> %-12s = %s"%('cwd',os.getcwd())
-  print ">>> %-12s = %s"%('ls',os.listdir(outdir))
+  print(">>> %-12s = %s"%('cwd',os.getcwd()))
+  print(">>> %-12s = %s"%('ls',os.listdir(outdir)))
   from TauFW.PicoProducer.storage.utils import getstorage
   from TauFW.common.tools.file import rmfile
   store = getstorage(copydir,verb=2)
   store.cp(outfname)
-  print ">>> Removing %r..."%(outfname)
+  print(">>> Removing %r..."%(outfname))
   rmfile(outfname)
 
 # DONE
-print ">>> picojob.py done after %.1f seconds"%(time.time()-time0)
+print(">>> picojob.py done after %.1f seconds"%(time.time()-time0))

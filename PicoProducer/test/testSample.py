@@ -5,7 +5,7 @@
 from TauFW.PicoProducer.storage.Sample import MC as M
 from TauFW.PicoProducer.storage.Sample import Data as D
 from TauFW.PicoProducer.storage.Sample import Sample, LOG
-from TauFW.PicoProducer.batch.utils import getsamples
+from TauFW.PicoProducer.storage.utils import getsamples
 
 
 def testSample():
@@ -67,7 +67,7 @@ if __name__ == "__main__":
   import sys
   from argparse import ArgumentParser
   argv = sys.argv
-  description = '''Script to test the Plot class for comparing histograms.'''
+  description = """Script to test the Plot class for comparing histograms."""
   parser = ArgumentParser(prog="testSample",description=description,epilog="Good luck!")
   parser.add_argument('-v', '--verbose', dest='verbosity', type=int, nargs='?', const=1, default=0, action='store',
                                          help="set verbosity" )

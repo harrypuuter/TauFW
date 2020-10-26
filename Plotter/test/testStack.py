@@ -18,6 +18,7 @@ coldict = { # HTT / TauPOG colors
 
 
 def plotstack(xname,xtitle,datahist,exphists,ratio=False,logy=False):
+  """Plot Stack objects for a given data hisogram and list of MC histograms."""
   
   # SETTING
   outdir   = ensuredir("plots")
@@ -80,7 +81,9 @@ def createhists(procs,binning,nevts):
   datahist.SetBinErrorOption(TH1D.kPoisson)
   if LOG.verbosity>=1:
     print ">>> createhists: Creating pseudo data:"
-    print ">>> %5s [%5s, %5s]      %-17s   %s"%('bin','xlow','xup','exp','data')
+    TAB = LOG.table("%5s [%5s, %5s]      %-14s   %-20s",
+                    "%5d [%5s, %5s] %8.1f +- %5.1f %8d +%5.1f -%5.1f")
+    TAB.printheader('bin','xlow','xup','exp','data')
   for ibin in xrange(0,nbins+2):
     exp    = tothist.GetBinContent(ibin)
     xlow   = hist.GetXaxis().GetBinLowEdge(ibin)
@@ -93,8 +96,7 @@ def createhists(procs,binning,nevts):
     data   = int(gRandom.Poisson(exp))
     datahist.SetBinContent(ibin,data)
     if LOG.verbosity>=1:
-      print ">>> %5d [%5s, %5s] %8.1f +- %5.1f %8d +%5.1f -%5.1f"%(
-                 ibin,xlow,xup,exp,experr,data,datahist.GetBinErrorUp(ibin),datahist.GetBinErrorLow(ibin))
+      TAB.printrow(ibin,xlow,xup,exp,experr,data,datahist.GetBinErrorUp(ibin),datahist.GetBinErrorLow(ibin))
   
   return datahist, exphists
   
@@ -120,7 +122,7 @@ def main():
     (('pt_1',"Leading p_{T} [GeV]",50,0,100), [
       ('ZTT', "Z -> #tau_{mu}#tau_{h}", 1.2, gRandom.Landau, (30,2)),
       ('WJ', "W + jets",                0.2, gRandom.Landau, (30,2)),
-      ('QCD', "QCD multiplet",          0.3, gRandom.Landau, (36,5)),
+      ('QCD', "QCD multiplet",          0.3, gRandom.Landau, (37,5)),
       ('TT', "t#bar{t}",                0.2, gRandom.Landau, (48,6)),
      ]),
     (('njets',"Number of jets",8,0,8), [
@@ -160,7 +162,7 @@ if __name__ == "__main__":
   import sys
   from argparse import ArgumentParser
   argv = sys.argv
-  description = '''Script to test the Plot class for comparing histograms.'''
+  description = """Script to test the Plot class for comparing histograms"""
   parser = ArgumentParser(prog="testStack",description=description,epilog="Good luck!")
   parser.add_argument('-v', '--verbose', dest='verbosity', type=int, nargs='?', const=1, default=0, action='store',
                                          help="set verbosity" )

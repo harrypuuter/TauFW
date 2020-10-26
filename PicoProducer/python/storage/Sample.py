@@ -10,16 +10,24 @@ import os, re, json
 import importlib
 from copy import deepcopy
 from fnmatch import fnmatch
-from TauFW.common.tools.utils import execute, CalledProcessError, repkey, ensurelist
-from TauFW.common.tools.file import ensurefile
+from TauFW.common.tools.utils import execute, CalledProcessError, repkey, ensurelist, isglob
+from TauFW.common.tools.file import ensurefile, ensureTFile
+from TauFW.PicoProducer.tools.config import _user
 from TauFW.PicoProducer.storage.utils import LOG, getstorage
+dasurls = ["root://cms-xrd-global.cern.ch/","root://xrootd-cms.infn.it/", "root://cmsxrootd.fnal.gov/"]
 
 
 def dasgoclient(query,**kwargs):
   """Help function to call dasgoclient."""
   try:
-    verbosity = kwargs.get('verb', 0)
+    verbosity = kwargs.get('verb',  0  )
+    limit     = kwargs.get('limit', 0  )
+    option    = kwargs.get('opts',  "" )
     dascmd    = 'dasgoclient --query="%s"'%(query)
+    if limit>0:
+      dascmd += " --limit=%d"%(limit)
+    if option:
+      dascmd += " "+option.strip()
     LOG.verb(repr(dascmd),verbosity)
     cmdout    = execute(dascmd,verb=verbosity-1)
   except CalledProcessError as e:
@@ -71,18 +79,22 @@ class Sample(object):
     self.dtype        = dtype
     self.channels     = kwargs.get('channel',      None )
     self.channels     = kwargs.get('channels',     self.channels )
-    self.storage      = kwargs.get('store',        None ) # if stored elsewhere than DAS
+    self.storage      = None
+    self.storepath    = kwargs.get('store',        None ) # if stored elsewhere than DAS
     self.url          = kwargs.get('url',          None )
+    self.dasurl       = kwargs.get('dasurl',       None ) or "root://cms-xrd-global.cern.ch/"
     self.blacklist    = kwargs.get('blacklist',    [ ]  ) # black list file
-    self.instance     = kwargs.get('instance', 'prod/phys03' if path.endswith('USER') else 'prod/global')
+    self.instance     = kwargs.get('instance', 'prod/phys03' if path.endswith('USER') else 'prod/global') # if None, does not exist in DAS
     self.nfilesperjob = kwargs.get('nfilesperjob', -1   ) # number of nanoAOD files per job
     self.extraopts    = kwargs.get('opts',         [ ]  ) # extra options for analysis module, e.g. ['doZpt=1','tes=1.1']
     self.subtry       = kwargs.get('subtry',       0    ) # to help keep track of resubmission
     self.jobcfg       = kwargs.get('jobcfg',       { }  ) # to help keep track of resubmission
-    self.nevents      = kwargs.get('nevents',      0    ) # number of nanoAOD events that can be processed
+    self.nevents      = kwargs.get('nevts',        0    ) # number of nanoAOD events that can be processed
+    self.nevents      = kwargs.get('nevents',      self.nevents )
     self.files        = kwargs.get('files',        [ ]  ) # list of ROOT files, OR text file with list of files
     self.postfix      = kwargs.get('postfix',      None ) or "" # post-fix (before '.root') for stored ROOT files
     self.era          = kwargs.get('era',          ""   ) # for expansion of $ERA variable
+    self.dosplit      = kwargs.get('split', len(self.paths)>=2 ) # allow splitting (if multiple DAS datasets)
     self.verbosity    = kwargs.get('verbosity',     0   ) # verbosity level for debugging
     self.refreshable  = not self.files                   # allow refresh on file list in getfiles()
     
@@ -95,18 +107,19 @@ class Sample(object):
       self.extraopts = [self.extraopts]
     
     # STORAGE & URL DEFAULTS
-    if self.storage:
-      self.storage = repkey(self.storage,ERA=self.era,GROUP=self.group,SAMPLE=self.name)
+    if self.storepath:
+      self.storepath = repkey(self.storepath,USER=_user,ERA=self.era,GROUP=self.group,SAMPLE=self.name)
+      self.storage = getstorage(repkey(self.storepath,PATH=self.paths[0],DAS=self.paths[0]),ensure=False)
+    if not self.dasurl:
+      self.dasurl = self.url if (self.url in dasurls) else dasurls[0]
     if not self.url:
-      if self.storage:
-        from TauFW.PicoProducer.storage.StorageSystem import Local
-        storage = getstorage(repkey(self.storage,PATH=self.paths[0]))
-        if isinstance(storage,Local):
-          self.url = "root://cms-xrd-global.cern.ch/"
+      if self.storepath:
+        if self.storage.__class__.__name__=='Local':
+          self.url = "" #root://cms-xrd-global.cern.ch/
         else:
-          self.url = storage.fileurl
+          self.url = self.storage.fileurl
       else:
-        self.url = "root://cms-xrd-global.cern.ch/"
+        self.url = self.dasurl
     
     # GET FILE LIST FROM TEXT FILE
     if isinstance(self.files,str):
@@ -139,29 +152,36 @@ class Sample(object):
     """Initialize sample from job config JSON file."""
     with open(cfgname,'r') as file:
       jobcfg = json.load(file)
+    for key, value in jobcfg.items():
+      if isinstance(value,unicode):
+        jobcfg[key] = str(value)
     for key in ['group','name','paths','try','channel','chunkdict','dtype','extraopts']:
       LOG.insist(key in jobcfg,"Did not find key '%s' in job configuration %s"%(key,cfgname))
     jobcfg['config']    = str(cfgname)
     jobcfg['chunkdict'] = { int(k): v for k, v in jobcfg['chunkdict'].iteritems() }
     nfilesperjob        = int(jobcfg['nfilesperjob'])
-    dtype    = str(jobcfg['dtype'])
-    channels = [str(jobcfg['channel'])]
+    dtype    = jobcfg['dtype']
+    channels = [jobcfg['channel']]
     opts     = [str(s) for s in jobcfg['extraopts']]
     subtry   = int(jobcfg['try'])
     nevents  = int(jobcfg['nevents'])
     sample   = Sample(jobcfg['group'],jobcfg['name'],jobcfg['paths'],dtype=dtype,channels=channels,
-                       subtry=subtry,jobcfg=jobcfg,nfilesperjob=nfilesperjob,nevents=nevents,opts=opts)
+                      subtry=subtry,jobcfg=jobcfg,nfilesperjob=nfilesperjob,nevents=nevents,opts=opts)
     return sample
   
-  def split(self):
-    """Split if multiple das paths."""
+  def split(self,tag="ext"):
+    """Split if multiple DAS dataset paths."""
     samples = [ ]
-    for i, path in enumerate(self.paths):
-      sample = deepcopy(self)
-      if i>1:
-        sample.name += "_ext%d"%i
-      sample.paths = [path]
-      samples.append(sample)
+    if self.dosplit:
+      for i, path in enumerate(self.paths):
+        sample = deepcopy(self)
+        if i>0:
+          sample.name += "_%s%d"%(tag,i) # rename to distinguish jobs
+        sample.paths = [path]
+        sample.dosplit = False
+        samples.append(sample)
+    else:
+      samples.append(self)
     return samples
   
   def match(self,patterns,verb=0):
@@ -170,7 +190,7 @@ class Sample(object):
     sample   = self.name.strip('/')
     match_   = False
     for pattern in patterns:
-      if '*' in pattern or '?' in pattern or ('[' in pattern and ']' in pattern):
+      if isglob(pattern):
         if fnmatch(sample,pattern+'*'):
           match_ = True
           break
@@ -185,43 +205,63 @@ class Sample(object):
         print ">>> Sample.match: NO '%s' match to '%s'!"%(sample,pattern)
     return match_
   
-  def getfiles(self,refresh=False,url=True,verb=0):
-    """Get list of files from DAS."""
+  def getfiles(self,das=False,refresh=False,url=True,limit=-1,verb=0):
+    """Get list of files from storage system (default), or DAS (if no storage system of das=True)."""
     files   = self.files
-    if self.refreshable and (not files or refresh):
+    url_    = self.dasurl if (das and self.storage) else self.url
+    if self.refreshable and (not files or das or refresh):
       files = [ ]
-      for path in self.paths:
-        if self.storage: # get files from storage system
+      for daspath in self.paths:
+        if (self.storage and not das) or (not self.instance): # get files from storage system
           postfix = self.postfix+'.root'
-          sepath  = repkey(self.storage,PATH=path).replace('//','/')
-          storage = getstorage(sepath,verb=verb-1)
-          outlist = storage.getfiles(url=url,verb=verb-1)
+          sepath  = repkey(self.storepath,PATH=daspath,DAS=daspath).replace('//','/')
+          outlist = self.storage.getfiles(sepath,url=url,verb=verb-1)
+          if limit>0:
+            outlist = outlist[:limit]
         else: # get files from DAS
           postfix = '.root'
-          cmdout  = dasgoclient("file dataset=%s instance=%s"%(path,self.instance))
+          cmdout  = dasgoclient("file dataset=%s instance=%s"%(daspath,self.instance),limit=limit,verb=verb-1)
           outlist = cmdout.split(os.linesep)
         for line in outlist: # filter root files
           line = line.strip()
           if line.endswith(postfix) and not any(f.endswith(line) for f in self.blacklist):
-            if url and self.url not in line and 'root://' not in line:
-              line = self.url+line
+            if url and url_ not in line and 'root://' not in line:
+              line = url_+line
             files.append(line)
       files.sort() # for consistent list order
-      self.files = files
+      if not das or not self.storage:
+        self.files = files # save for efficiency
+    elif url and any(url_ not in f for f in files): # add url if missing
+      files = [(url_+f if url_ not in f else f) for f in files]
+    elif not url and any(url_ in f for f in files): # remove url
+      files = [f.replace(url_,"") for f in files]
     return files
   
-  def getnevents(self,refresh=False,verb=0):
-    """Get number of files from DAS."""
+  def getnevents(self,das=True,refresh=False,treename='Events',verb=0):
+    """Get number of nanoAOD events from DAS (default), or from files on storage system (das=False)."""
     nevents = self.nevents
     if nevents<=0 or refresh:
-      for path in self.paths:
-        cmdout = dasgoclient("summary dataset=%s instance=%s"%(path,self.instance))
-        if "nevents" in cmdout:
-          ndasevts = int(cmdout.split('"nevents":')[1].split(',')[0])
-        else:
-          ndasevts = 0
-          LOG.warning("Could not get number of events from DAS for %r."%(self.name))
-        nevents += ndasevts
+      if self.storage and not das: # get number of events from storage system
+        files = self.getfiles(url=True,refresh=refresh,verb=verb)
+        for fname in files:
+          file     = ensureTFile(fname)
+          tree     = file.Get(treename)
+          if not tree:
+            LOG.warning("getnevents: No %r tree in events in %r!"%('Events',fname))
+            continue
+          nevts    = tree.GetEntries()
+          file.Close()
+          nevents += nevts
+          LOG.verb("getnevents: Found %d events in %r."%(nevts,fname),verb,3)
+      else: # get number of events from DAS
+        for daspath in self.paths:
+          cmdout = dasgoclient("summary dataset=%s instance=%s"%(daspath,self.instance),verb=verb-1)
+          if "nevents" in cmdout:
+            ndasevts = int(cmdout.split('"nevents":')[1].split(',')[0])
+          else:
+            ndasevts = 0
+            LOG.warning("Could not get number of events from DAS for %r."%(self.name))
+          nevents += ndasevts
       self.nevents = nevents
     return nevents
   

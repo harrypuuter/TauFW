@@ -2,8 +2,9 @@
 # Author: Izaak Neutelings (July 2020)
 import os, re
 from TauFW.Plotter.sample.utils import *
+from TauFW.common.tools.math import round2digit, reldiff
 from TauFW.Plotter.plot.string import *
-from TauFW.Plotter.plot.utils import deletehist, printhist, round2digit
+from TauFW.Plotter.plot.utils import deletehist, printhist
 from TauFW.Plotter.sample.SampleStyle import *
 from TauFW.Plotter.plot.MultiDraw import MultiDraw
 from ROOT import TTree
@@ -18,27 +19,50 @@ class Sample(object):
     and number of events
   - create and fill histograms from tree
   - split histograms into components (e.g. based on some (generator-level) selections)
+  Initialize as
+    Sample(str name, str filename )
+    Sample(str name, str title, str filename )
+    Sample(str name, str title, str filename, float xsec )
+    Sample(str name, str title, str filename, float xsec, int nevts )
   """
   
-  def __init__(self, name, title, filename, xsec=-1.0, **kwargs):
+  def __init__(self, name, *args, **kwargs):
     import TauFW.Plotter.sample.utils as GLOB
     LOG.setverbosity(kwargs)
+    title    = ""
+    filename = ""
+    xsec     = -1.0
+    nevts    = -1
+    strargs  = [a for a in args if isinstance(a,str)]
+    numargs  = [a for a in args if isnumber(a)]
+    if len(strargs)==1:
+      filename = strargs[0]
+    elif len(strargs)==2:
+      title    = strargs[0]
+      filename = strargs[1]
+    else:
+      LOG.throw(IOError,"Sample.__init__: Invalid arguments; no filename was given: %r"%(args,))
+    if len(numargs)==1:
+      xsec  = numargs[0]
+    elif len(numargs)>=2:
+      xsec  = numargs[0]
+      nevts = numargs[1]
     self.name         = name                            # short name to use for files, histograms, etc.
-    self.title        = title                           # title for histogram entries
-    self.xsec         = xsec                            # cross section in units of pb
+    self.title        = title or gettitle(name,name)    # title for histogram entries
     self.filename     = filename                        # file name with tree
+    self.xsec         = xsec                            # cross section in units of pb
     self.fnameshort   = os.path.basename(self.filename) # short file name for printing
     self._file        = None                            # TFile file
     self._tree        = None                            # TTree tree
     self.splitsamples = [ ]                             # samples when splitting into subsamples
     self.treename     = kwargs.get('tree',         None         ) or 'tree'
-    self.nevents      = kwargs.get('nevts',        -1           ) # "raw" number of events
+    self.nevents      = kwargs.get('nevts',        nevts        ) # "raw" number of events
     self.nexpevts     = kwargs.get('nexp',         -1           ) # number of events you expect to be processed for check for missing events
     self.sumweights   = kwargs.get('sumw',         self.nevents ) # sum weights
-    self.binnevts     = kwargs.get('binnevts',      1           ) # cutflow bin with total number of (unweighted) events
-    self.binsumw      = kwargs.get('binsumw',      17           ) # cutflow bin with total sum of weight
+    self.binnevts     = kwargs.get('binnevts',     None         ) or 1  # cutflow bin with total number of (unweighted) events
+    self.binsumw      = kwargs.get('binsumw',      None         ) or 17 # cutflow bin with total sum of weight
     self.lumi         = kwargs.get('lumi',         GLOB.lumi    ) # integrated luminosity
-    self.norm         = kwargs.get('norm',         1.0          ) # lumi*xsec/binsumw normalization
+    self.norm         = kwargs.get('norm',         None         ) # lumi*xsec/binsumw normalization
     self.scale        = kwargs.get('scale',        1.0          ) # scales factor (e.g. for W+Jets renormalization)
     self.upscale      = kwargs.get('upscale',      1.0          ) # drawing up/down scaling
     self._scale       = self.scale # back up scale to overwrite previous renormalizations
@@ -60,8 +84,14 @@ class Sample(object):
       if self.isdata:
         self.setnevents(self.binnevts,self.binsumw)
       elif not self.isembed: #self.xsec>=0:
-        self.setnevents(self.binnevts,self.binsumw)
-        self.normalize(lumi=self.lumi,xsec=self.xsec,sumw=self.sumweights)
+        if self.nevents<0:
+          self.setnevents(self.binnevts,self.binsumw) # set nevents and sumweights from cutflow histogram
+        if self.sumweights<0:
+          self.sumweights = self.nevents # set sumweights to nevents (assume genweight==1)
+        if self.norm==None:
+          self.normalize(lumi=self.lumi,xsec=self.xsec,sumw=self.sumweights)
+    if self.norm==None:
+      self.norm = 1.0
   
   def __str__(self):
     """Returns string."""
@@ -73,34 +103,75 @@ class Sample(object):
     return '<%s(%r,%r) at %s>'%(self.__class__.__name__,self.name,self.title,hex(id(self)))
   
   @staticmethod
-  def printheader(title=None,justname=25,justtitle=25):
+  def printheader(title=None,merged=True,justname=25,justtitle=25):
     if title!=None:
       print ">>> %s"%(title)
-    name  = "Sample name".ljust(justname)
-    title = "title".ljust(justtitle)
-    print ">>> \033[4m%s %s %12s %12s %13s %9s  %s\033[0m"%(
-               name,title,"xsec [pb]","nevents","sumweights","norm","weight"+' '*8)
+    name   = "Sample name".ljust(justname)
+    title  = "title".ljust(justtitle)
+    if merged:
+      print ">>> \033[4m%s %s %10s %12s %17s %9s  %s\033[0m"%(
+                 name,title,"xsec [pb]","nevents","sumweights","norm","weight"+' '*8)
+    else:
+      print ">>> \033[4m%s %s %s\033[0m"%(name,title+' '*5,"Extra cut"+' '*18)
+    
   
   def printrow(self,**kwargs):
     print self.row(**kwargs)
   
-  def row(self,pre="",indent=0,justname=25,justtitle=25):
+  def row(self,pre="",indent=0,justname=25,justtitle=25,merged=True,split=True,colpass=False):
     """Returns string that can be used as a row in a samples summary table"""
-    name  = self.name.ljust(justname-indent)
-    title = self.title.ljust(justtitle)
-    return ">>> %s%s %s %12.2f %12.1f %13.2f %9.3f  %s"%(
-            pre,name,title,self.xsec,self.nevents,self.sumweights,self.norm,self.extraweight)
+    name   = self.name.ljust(justname-indent)
+    title  = self.title.ljust(justtitle)
+    string = ">>> %s%s %s %10.2f %12.1f %17.1f %9.4f  %s"%(
+             pre,name,title,self.xsec,self.nevents,self.sumweights,self.norm,self.extraweight)
+    if split:
+      string += self.splitrows(indent=indent,justname=justname,justtitle=justtitle)
+    return string
+    
+  def splitrows(self,indent=0,justname=25,justtitle=25):
+    """Get split rows."""
+    string    = ""
+    if self.splitsamples:
+      justtitle = max(justtitle,max(len(s.title) for s in self.splitsamples)+1)
+      for i, sample in enumerate(self.splitsamples):
+        name    = sample.name.ljust(justname-indent-3)
+        title   = sample.title.ljust(justtitle+3)
+        subpre  = ' '*indent+"├─ " if i<len(self.splitsamples)-1 else "└─ "
+        string += "\n>>> "+color("%s%s %s %s"%(subpre,name,title,sample.cuts))
+    return string
   
-  def printobjs(self,title=""):
+  def printobjs(self,title="",file=False):
     """Print all sample objects recursively."""
-    print ">>> %s%r"%(title,self)
     if isinstance(self,MergedSample):
+      print ">>> %s%r"%(title,self)
       for sample in self.samples:
-        sample.printobjs(title+"  ")
+        sample.printobjs(title+"  ",file=file)
+    elif file:
+      print ">>> %s%r %s"%(title,self,self.filename)
+    else:
+      print ">>> %s%r"%(title,self)
     if self.splitsamples:
       print ">>> %s  Split samples:"%(title)
       for sample in self.splitsamples:
-        sample.printobjs(title+"    ")
+        sample.printobjs(title+"    ",file=file)
+  
+  def get_max_name_len(self,indent=0):
+    """Help function for SampleSet.printtable to make automatic columns."""
+    if isinstance(self,MergedSample):
+      namelens = [len(self.name)]
+      for sample in self.samples:
+        namelens.append(indent+sample.get_max_name_len(indent=indent+3))
+      return max(namelens)
+    return indent+len(self.name)
+  
+  def get_max_title_len(self):
+    """Help function for SampleSet.printtable to make automatic columns."""
+    if isinstance(self,MergedSample):
+      namelens = [len(self.title)]
+      for sample in self.samples:
+        namelens.append(sample.get_max_title_len())
+      return max(namelens)
+    return len(self.title)
   
   @property
   def file(self):
@@ -160,18 +231,20 @@ class Sample(object):
   
   def clone(self,name=None,title=None,filename=None,**kwargs):
     """Shallow copy."""
+    verbosity    = LOG.getverbosity(kwargs)
+    samename     = kwargs.get('samename', False )
+    deep         = kwargs.get('deep',     False ) # deep copy
+    close        = kwargs.get('close',    False ) # keep new sample closed for memory space
+    splitsamples = [s.clone(samename=samename,deep=deep) for s in self.splitsamples] if deep else self.splitsamples[:]
     if name==None:
       name = self.name + ("" if samename else  "_clone" )
     if title==None:
       title = self.title
     if filename==None:
       filename = self.filename
-    samename                = kwargs.get('samename', False )
-    deep                    = kwargs.get('deep',     False ) # deep copy
-    close                   = kwargs.get('close',    False ) # keep new sample closed for memory space
-    splitsamples            = [s.clone(samename=samename,deep=deep) for s in self.splitsamples] if deep else self.splitsamples[:]
     kwargs['isdata']        = self.isdata
     kwargs['isembed']       = self.isembed
+    kwargs['norm']          = self.norm # prevent automatic norm computation without xsec
     newdict                 = self.__dict__.copy()
     newdict['name']         = name
     newdict['title']        = title
@@ -183,59 +256,50 @@ class Sample(object):
     if deep and self.file: # force new, separate file
       newdict['file'] = None #ensureTFile(self.file.GetName())
     newsample               = type(self)(name,title,filename,**kwargs)
-    newsample.__dict__.update(newdict)
+    newsample.__dict__.update(newdict) # overwrite defaults
     LOG.verb('Sample.clone: name=%r, title=%r, color=%s, cuts=%r, weight=%r'%(
-             newsample.name,newsample.title,newsample.fillcolor,newsample.cuts,newsample.weight),1)
+             newsample.name,newsample.title,newsample.fillcolor,newsample.cuts,newsample.weight),verbosity,2)
     if close:
       newsample.close()
     return newsample
   
-  ###def appendFileName(self,file_app,**kwargs):
-  ###  """Append filename (in front of globalTag or .root)."""
-  ###  verbosity     = LOG.getverbosity(kwargs)
-  ###  title_app     = kwargs.get('title_app',  "" )
-  ###  title_tag     = kwargs.get('title_tag',  "" )
-  ###  title_veto    = kwargs.get('title_veto', "" )
-  ###  oldfilename   = self.filename
-  ###  if globalTag:
-  ###    newfilename = oldfilename if file_app in oldfilename else oldfilename.replace(globalTag,file_app+globalTag)
-  ###  else:
-  ###    newfilename = oldfilename if file_app in oldfilename else oldfilename.replace(".root",file_app+".root")
-  ###  LOG.verb('replacing %r with %r'%(oldfilename,self.filename),verbosity,3)
-  ###  self.filename = newfilename
-  ###  if file_app  not in self.name:
-  ###    self.name  += file_app
-  ###  if title_app not in self.title and not (title_veto and re.search(title_veto,self.title)):
-  ###    self.title += title_app
-  ###  if self.file:
-  ###    #reopenTree = True if self._tree else False
-  ###    self.file.Close()
-  ###    self.file = ensureTFile(self.filename)
-  ###    #if reopenTree: self.tree = self.file.Get(self.treename)
-  ###  if not isinstance(self,MergedSample):
-  ###    norm_old  = self.norm
-  ###    N_old     = self.sumweights
-  ###    N_unw_old = self.nevents
-  ###    if self.isdata:
-  ###      self.setnevents(self.binnevts,self.binsumw)
-  ###    if self.isembed:
-  ###      pass
-  ###    elif self.xsec>=0:
-  ###      self.setnevents(self.binnevts,self.binsumw)
-  ###      #self.normalize(lumi=self.lumi) # can affect scale computed by stitching
-  ###    if (N_old>0 and abs(N_old-self.sumweights)/float(N_old)>0.02) or (N_unw_old>0 and abs(N_unw_old-self.nevents)/float(N_unw_old)>0.02):
-  ###      LOG.warning('Sample.appendFileName: file %s has a different number of events (N=%s, N_unw=%s, norm=%s, xsec=%s, lumi=%s) than %s (N=%s, N_unw=%s, norm=%s)! '%\
-  ###        (self.filename,self.sumweights,self.nevents,self.norm,self.xsec,self.lumi,oldfilename,N_old,N_unw_old,norm_old))
-  ###    ###if norm_old and abs(norm_old-self.norm)/float(norm_old)>0.02:
-  ###    ###  LOG.warning('Sample.appendFileName: file %s has a different number of normalization (N=%s, N_unw=%s, norm=%s, xsec=%s, lumi=%s) than %s (N=%s, N_unw=%s, norm=%s)! '%\
-  ###    ###    (self.filename,self.sumweights,self.nevents,self.norm,self.xsec,self.lumi,oldfilename,N_old,N_unw_old,norm_old))
-  ###  elif ':' not in self.filename and not os.path.isfile(self.filename):
-  ###    LOG.warning('Sample.appendFileName: file %s does not exist!'%(self.filename))
-  ###  if isinstance(self,MergedSample):
-  ###    for sample in self.samples:
-  ###      sample.appendFileName(file_app,**kwargs)
-  ###  for sample in self.splitsamples:
-  ###      sample.appendFileName(file_app,**kwargs)
+  def appendfilename(self,filetag,nametag=None,titletag=None,**kwargs):
+    """Append filename (in front .root)."""
+    verbosity     = LOG.getverbosity(kwargs)
+    oldfilename   = self.filename
+    newfilename   = oldfilename if filetag in oldfilename else oldfilename.replace(".root",filetag+".root")
+    LOG.verb('Sample.appendfilename(%r,%r): %r -> %r'%(filetag,titletag,oldfilename,newfilename),verbosity,2)
+    self.filename = newfilename
+    if nametag==None:
+      nametag     = filetag
+    if titletag==None:
+      titletag    = nametag
+    self.name    += nametag
+    self.title   += titletag
+    if self.file:
+      self.file.Close()
+      self.file   = ensureTFile(self.filename)
+    if not isinstance(self,MergedSample):
+      norm_old    = self.norm
+      sumw_old    = self.sumweights
+      nevts_old   = self.nevents
+      if self.isdata:
+        self.setnevents(self.binnevts,self.binsumw)
+      if self.isembed:
+        pass
+      elif self.xsec>=0:
+        self.setnevents(self.binnevts,self.binsumw)
+        #self.normalize(lumi=self.lumi) # can affect scale computed by stitching
+      if reldiff(sumw_old,self.sumweights)>0.02 or reldiff(sumw_old,self.sumweights)>0.02:
+        LOG.warning('Sample.appendfilename: file %s has a different number of events (sumw=%s, nevts=%s, norm=%s, xsec=%s, lumi=%s) than %s (N=%s, N_unw=%s, norm=%s)! '%\
+          (self.filename,self.sumweights,self.nevents,self.norm,self.xsec,self.lumi,oldfilename,sumw_old,nevts_old,norm_old))
+    elif ':' not in self.filename and not os.path.isfile(self.filename):
+      LOG.warning('Sample.appendfilename: file %s does not exist!'%(self.filename))
+    if isinstance(self,MergedSample):
+      for sample in self.samples:
+        sample.appendfilename(filetag,nametag,titletag,**kwargs)
+    for sample in self.splitsamples:
+      sample.appendfilename(filetag,nametag,titletag,**kwargs)
   
   def setfilename(self,filename):
     """Set filename."""
@@ -247,11 +311,11 @@ class Sample(object):
     """Close and reopen file. Use it to free up and clean memory."""
     verbosity = LOG.getverbosity(kwargs)
     if self.file:
-      if verbosity>3:
-        LOG.verb('Sample.reload: closing and deleting %s with content:'%(self.file.GetName()),verbosity,2)
+      if verbosity>=4:
+        print "Sample.reload: closing and deleting %s with content:"%(self.file.GetName())
         self.file.ls()
       self.file.Close()
-      del self.file
+      del self._file
       self.file = None
     if isinstance(self,MergedSample):
       for sample in self.samples:
@@ -270,11 +334,11 @@ class Sample(object):
     """Close file. Use it to free up and clean memory."""
     verbosity = LOG.getverbosity(kwargs)
     if self.file:
-      if verbosity>1:
-        LOG.verb('Sample.close: closing and deleting %s with content:'%(self.file.GetName()),verbosity,3)
+      if verbosity>=4:
+        print "Sample.close: closing and deleting %s with content:"%(self.file.GetName())
         self.file.ls()
       self.file.Close()
-      del self.file
+      del self._file
       self.file = None
     for sample in self.splitsamples:
       sample.close(**kwargs)
@@ -312,9 +376,16 @@ class Sample(object):
         LOG.throw(IOError,"Could not find cutflow histogram %r in %s!"%(cutflow,self.filename))
     self.nevents    = cfhist.GetBinContent(binnevts)
     self.sumweights = cfhist.GetBinContent(binsumw)
+    if self.nevents<=0:
+      LOG.warning("Sample.setnevents: Bin %d of %r to retrieve nevents is %s<=0!"
+                  "In initialization, please specify the keyword 'binnevts' to select the right bin, or directly set the number of events with 'nevts'."%(binnevts,self.nevents,cutflow))
+    if self.sumweights<=0:
+      LOG.warning("Sample.setnevents: Bin %d of %r to retrieve sumweights is %s<=0!"
+                  "In initialization, please specify the keyword 'binsumw' to select the right bin, or directly set the number of events with 'sumw'."%(binsumw,self.sumweights,cutflow))
+      self.sumweights = self.nevents
     file.Close()
     if 0<self.nevents<self.nexpevts*0.97: # check for missing events
-       LOG.warning('Sample: Sample %r has significantly fewer events (%d) than expected (%d).'%(self.name,self.nevents,self.nexpevts))
+      LOG.warning('Sample.setnevents: Sample %r has significantly fewer events (%d) than expected (%d).'%(self.name,self.nevents,self.nexpevts))
     return self.nevents
   
   def normalize(self,lumi=None,xsec=None,sumw=None,**kwargs):
@@ -444,10 +515,10 @@ class Sample(object):
       sample.split(('ZTT',"Real tau","genmatch_2==5"),
                    ('ZJ', "Fake tau","genmatch_2!=5"))
     """
-    verbosity      = LOG.getverbosity(kwargs)
-    color_dict     = kwargs.get('colors', { }) # dictionary with colors
-    splitlist      = unwraplistargs(splitlist)
-    splitsamples   = [ ]
+    verbosity    = LOG.getverbosity(kwargs)
+    color_dict   = kwargs.get('colors', { }) # dictionary with colors
+    splitlist    = unwraplistargs(splitlist)
+    splitsamples = [ ]
     for i, info in enumerate(splitlist): #split_dict.items()
       name  = "%s_split%d"%(self.name,i)
       if len(info)>=3:
@@ -485,8 +556,8 @@ class Sample(object):
     if self.isdata:
       weight = joinweights(self.weight,self.extraweight,kwargs.get('weight',""))
     else:
-      weight = joinweights(self.weight,self.extraweight,kwargs.get('weight',"")) #,selection.weight)
-    cuts     = joincuts(selection,self.cuts,kwargs.get('cuts',""),kwargs.get('extracuts',"")) #selection.selection
+      weight = joinweights(selection.weight,self.weight,self.extraweight,kwargs.get('weight',""))
+    cuts     = joincuts(selection.selection,self.cuts,kwargs.get('cuts',""),kwargs.get('extracuts',""))
     #if replaceweight:
     #  if len(replaceweight)==2 and not isList(replaceweight[0]):
     #    replaceweight = [replaceweight]
@@ -503,7 +574,7 @@ class Sample(object):
     for variable in variables:
       
       # VAREXP
-      hname  = makehistname(variable.filename,name)
+      hname  = makehistname(variable,name) # $VAR_$NAME
       varcut = ""
       if self.isdata and (blind or variable.blindcuts or variable.cut or variable.dataweight):
         blindcuts = ""
@@ -531,10 +602,15 @@ class Sample(object):
       hists.append(hist)
     
     # FILL HISTOGRAMS
+    LOG.insist(len(variables)==len(varexps)==len(hists),
+               "Number of variables (%d), variable expressions (%d) and histograms (%d) must be equal!"%(len(variables),len(varexps),len(hists)))
     if varexps:
-      file, tree = self.get_newfile_and_tree() # create new file and tree for thread safety
-      out = tree.MultiDraw(varexps,cuts,drawopt,hists=hists)
-      file.Close()
+      try:
+        file, tree = self.get_newfile_and_tree() # create new file and tree for thread safety
+        out = tree.MultiDraw(varexps,cuts,drawopt,hists=hists)
+        file.Close()
+      except KeyboardInterrupt:
+        LOG.throw(KeyboardInterrupt,"Interrupted Sample.gethist for %r (%d histogram%s)"%(self.name,len(varexps),'' if len(varexps)==1 else 's'))
     
     # FINISH
     nentries = 0
@@ -542,7 +618,6 @@ class Sample(object):
     for variable, hist in zip(variables,hists):
       if scale!=1.0:   hist.Scale(scale)
       if scale==0.0:   LOG.warning("Scale of %s is 0!"%self.name)
-      if verbosity>=4: printhist(hist)
       hist.SetLineColor(lcolor)
       hist.SetFillColor(kWhite if self.isdata or self.issignal else fcolor)
       hist.SetMarkerColor(lcolor)
@@ -560,6 +635,9 @@ class Sample(object):
         for var, varexp, hist in zip(variables,varexps,hists):
           print '>>>   Variable %r: varexp=%r, entries=%d, integral=%d'%(var.name,varexp,hist.GetEntries(),hist.Integral())
           #print '>>>   Variable %r: cut=%r, weight=%r, varexp=%r'%(var.name,var.cut,var.weight,varexp)
+          if verbosity>=5:
+            printhist(hist,pre=">>>   ")
+      
     
     if issingle:
       return hists[0]
@@ -567,7 +645,7 @@ class Sample(object):
   
   def gethist2D(self, *args, **kwargs):
     """Create and fill a 2D histogram from a tree."""
-    variables, selection, issingle = unwrap_gethist_args_2D(*args)
+    variables, selection, issingle = unwrap_gethist2D_args(*args)
     verbosity = LOG.getverbosity(kwargs)
     scale     = kwargs.get('scale',         1.0        ) * self.scale * self.norm
     name      = kwargs.get('name',          self.name  )
@@ -580,8 +658,8 @@ class Sample(object):
     if self.isdata:
       weight  = joinweights(self.weight,self.extraweight,kwargs.get('weight',""))
     else:
-      weight  = joinweights(self.weight,self.extraweight,kwargs.get('weight',""),selection) #.weight
-    cuts      = joincuts(selection,self.cuts,kwargs.get('cuts',""),kwargs.get('extracuts',""),weight=weight) #.selection
+      weight  = joinweights(selection.weight,self.weight,self.extraweight,kwargs.get('weight',""))
+    cuts      = joincuts(selection.selection,self.cuts,kwargs.get('cuts',""),kwargs.get('extracuts',""),weight=weight)
     
     # PREPARE
     hists     = [ ]
@@ -589,7 +667,7 @@ class Sample(object):
     for xvar, yvar in variables:
       
       # VAREXP
-      hname = makehistname("%s_vs_%s"%(xvar.filename,yvar.filename),name)
+      hname = makehistname("%s_vs_%s"%(xvar,yvar),name)
       if xvar.cut or yvar.cut or ((xvar.weight or yvar.weight) and not self.isdata):
         if self.isdata:
           varcut = joincuts(xvar.cut,yvar.cut)
@@ -608,9 +686,15 @@ class Sample(object):
       hist.SetOption(drawopt)
     
     # DRAW
-    file, tree = self.get_newfile_and_tree() # create new file and tree for thread safety
-    out = tree.MultiDraw(varexps,cuts,drawopt,hists=hists)
-    file.Close()
+    LOG.insist(len(variables)==len(varexps)==len(hists),
+               "Number of variables (%d), variable expressions (%d) and histograms (%d) must be equal!"%(len(variables),len(varexps),len(hists)))
+    if varexps:
+      try:
+        file, tree = self.get_newfile_and_tree() # create new file and tree for thread safety
+        out = tree.MultiDraw(varexps,cuts,drawopt,hists=hists)
+        file.Close()
+      except KeyboardInterrupt:
+        LOG.throw(KeyboardInterrupt,"Interrupted Sample.gethist for %r (%d histogram%s)"%(self.name,len(varexps),'' if len(varexps)==1 else 's'))
     
     # FINISH
     nentries = 0
@@ -618,7 +702,6 @@ class Sample(object):
     for variable, hist in zip(variables,hists):
       if scale!=1.0:   hist.Scale(scale)
       if scale==0.0:   LOG.warning("Scale of %s is 0!"%self.name)
-      if verbosity>=3: printhist(hist)
       if hist.GetEntries()>nentries:
         nentries = hist.GetEntries()
         integral = hist.Integral()
@@ -629,6 +712,12 @@ class Sample(object):
       print ">>>   scale: %.6g (scale=%.6g, norm=%.6g)"%(scale,self.scale,self.norm)
       print ">>>   entries: %d (%.2f integral)"%(nentries,integral)
       print ">>>   %s"%cuts
+      if verbosity>=4:
+        for var, varexp, hist in zip(variables,varexps,hists):
+          print '>>>   Variables (%r,%r): varexp=%r, entries=%d, integral=%d'%(var[0].name,var[1].name,varexp,hist.GetEntries(),hist.Integral())
+          #print '>>>   Variable %r: cut=%r, weight=%r, varexp=%r'%(var.name,var.cut,var.weight,varexp)
+          if verbosity>=5:
+            printhist(hist,pre=">>>   ")
     
     if issingle:
       return hists[0]
@@ -636,33 +725,8 @@ class Sample(object):
   
   def match(self, *terms, **kwargs):
     """Check if search terms match the sample's name, title and/or tags."""
-    terms = [l for l in terms if l!='']
-    if not terms:
-      return False
-    found  = True
-    regex  = kwargs.get('regex', False   ) # use regexpr patterns
-    incl   = kwargs.get('incl',  True    ) # match only one term
-    start  = kwargs.get('start', False   ) # match only beginning
     labels = [self.name,self.title]+self.tags
-    for searchterm in terms:
-      if not regex:
-        searchterm = re.sub(r"(?<!\\)\+",r"\+",searchterm) # replace + with \+
-        searchterm = re.sub(r"([^\.])\*",r"\1.*",searchterm) # replace * with .*
-      if start:
-        searchterm = '^'+searchterm
-      if incl: # inclusive: match only one search term
-        for label in labels:
-          matches = re.findall(searchterm,label)
-          if matches:
-            break
-        else:
-          return False # none of the labels matched to the searchterm
-      else: # exclusive: match all search terms
-        for label in labels:
-          matches = re.findall(searchterm,label)
-          if matches:
-            return True # one of the search term has been matched
-    return incl # if incl==True, at least one search terms was matched
+    return match(terms,labels,**kwargs)
   
 
 def Data(*args,**kwargs):

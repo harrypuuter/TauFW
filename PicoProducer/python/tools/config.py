@@ -8,7 +8,7 @@ from collections import OrderedDict
 from TauFW.PicoProducer import basedir
 from TauFW.common.tools.file import ensuredir, ensurefile
 from TauFW.common.tools.log import Logger, color, bold, header
-from TauFW.PicoProducer.storage.utils import getsedir, gettmpdir
+from TauFW.PicoProducer.storage.utils import getsedir, gettmpdirs
 
 
 # DEFAULTS
@@ -28,18 +28,20 @@ _channels     = OrderedDict([
 ])
 _dtypes       = ['mc','data','embed']
 _sedir        = getsedir()                       # guess storage element on current host
-_tmpdir       = gettmpdir()                      # temporary dir for creating intermediate hadd files
+_tmpskimdir, _tmphadddir = gettmpdirs()          # _tmphadddir: temporary dir for creating intermediate hadd files
+                                                 # _tmpskimdir: temporary dir for creating skimmed file before copying to outdir
 _jobdir       = "output/$ERA/$CHANNEL/$SAMPLE"   # for job config and log files
-_outdir       = _tmpdir+_jobdir                  # for job output
+_outdir       = _tmphadddir+_jobdir              # for job output
 _picodir      = _sedir+"analysis/$ERA/$GROUP"    # for storage of analysis ("pico") tuples after hadd
 _nanodir      = _sedir+"samples/nano/$ERA/$DAS"  # for storage of (skimmed) nanoAOD
 _filelistdir  = "samples/files/$ERA/$SAMPLE.txt" # location to save list of files
 _batchsystem  = 'HTCondor'
 _nfilesperjob = 1
 _cfgdefaults  = OrderedDict([
+  ('channels',_channels), ('eras',_eras),
   ('basedir',basedir),
   ('jobdir',_jobdir),     ('outdir',_outdir), ('nanodir',_nanodir), ('picodir',_picodir),
-  ('channels',_channels), ('eras',_eras),
+  ('tmpskimdir',_tmpskimdir),
   ('batch',_batchsystem), ('nfilesperjob',_nfilesperjob), ('filelistdir',_filelistdir),
 ])
 sys.path.append(basedir)
@@ -79,7 +81,7 @@ def getconfig(verb=0,refresh=False):
   
   # SANITY CHECKS - format of values for required keys
   for key in rqdstrs:
-    assert key in rqdstrs, "Required key '%s' not found in the configuration file..."%(key)
+    assert key in cfgdict, "Required key '%s' not found in the configuration file..."%(key)
     assert isinstance(cfgdict[key],basestring),\
       "Required value for '%s' must be a string or unicode! Instead is of type %s: %r"%(key,type(cfgdict[key]),key)
   for key in rqddicts:
@@ -122,7 +124,14 @@ class Config(object):
     self._path    = path
     for key in self._dict.keys():
       if isinstance(self._dict[key],unicode):
-        self._dict[key] = str(self._dict[key]) # convert unicode to str
+        self._dict[str(key)] = str(self._dict[key]) # convert unicode to str
+      elif isinstance(self._dict[key],dict):
+        for subkey in self._dict[key].keys():
+          item = self._dict[key][subkey]
+          if isinstance(item,unicode):
+            item = str(item)
+          self._dict[str(key)].pop(subkey,None)
+          self._dict[str(key)][str(subkey)] = item # convert unicode to str
   
   def __str__(self):
     return str(self._dict)
@@ -142,6 +151,8 @@ class Config(object):
   def __setattr__(self,key,val):
     if key in self.__dict__:
       self.__dict__[key] = val
+      if key in self._dict[key]:
+        self._dict[key] = val
     elif (key.startswith('__') and key.endswith('__')):
       raise AttributeError("Did not find '%s'"%(key))
     elif key.startswith('_'):
@@ -175,6 +186,9 @@ class Config(object):
     with open(path,'r') as infile:
       self._dict = json.load(infile,object_pairs_hook=OrderedDict)
     return self._dict
+  
+  def get(self,*args,**kwargs):
+    self._dict.get(*args,**kwargs)
   
   def pop(self,*args,**kwargs):
     self._dict.pop(*args,**kwargs)

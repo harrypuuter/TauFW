@@ -25,7 +25,7 @@ class TreeProducerMuTau(TreeProducerTauPair):
     self.addBranch('dxy_1',                      'f')
     self.addBranch('dz_1',                       'f')
     self.addBranch('q_1',                        'i')
-    self.addBranch('iso_1',                      'f', title="pfRelIso04_all_1")
+    self.addBranch('iso_1',                      'f', title="pfRelIso04_all")
     
     
     ###########
@@ -40,9 +40,9 @@ class TreeProducerMuTau(TreeProducerTauPair):
     self.addBranch('dxy_2',                      'f')
     self.addBranch('dz_2',                       'f')
     self.addBranch('q_2',                        'i')
-    self.addBranch('iso_2',                      'f', title="rawIso_2")
-    self.addBranch('idiso_2',                    'i')
     self.addBranch('dm_2',                       'i')
+    self.addBranch('iso_2',                      'f', title="rawIso")
+    self.addBranch('idiso_2',                    'i', title="rawIso WPs")
     self.addBranch('rawAntiEle_2',               'f')
     self.addBranch('rawMVAoldDM2017v2_2',        'f')
     self.addBranch('rawMVAnewDM2017v2_2',        'f')
@@ -63,10 +63,10 @@ class TreeProducerMuTau(TreeProducerTauPair):
     self.addBranch('neutralIso_2',               'f')
     self.addBranch('photonsOutsideSignalCone_2', 'f')
     self.addBranch('puCorr_2',                   'f')
+    self.addBranch('jpt_match_2',                'f', -1, title="pt of jet matching tau")
     
-    self.addBranch('jpt_match_2',                'f', -1)
     if self.module.ismc:
-      self.addBranch('jpt_genmatch_2',           'f', -1)
+      self.addBranch('jpt_genmatch_2',           'f', -1, title="pt of gen jet matching tau")
       self.addBranch('genmatch_1',               'i', -1)
       self.addBranch('genmatch_2',               'i', -1)
       self.addBranch('genvistaupt_2',            'f', -1)

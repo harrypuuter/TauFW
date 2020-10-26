@@ -19,6 +19,8 @@ def plothist(xtitle,hists,ratio=False,logy=False,norm=False):
   if norm:
     fname += "_norm" # normalize each histogram
   rrange   = 0.5
+  width    = 0.2             # legend width
+  position = 'topright'      # legend position
   header   = "Gaussians"     # legend header
   text     = "#mu#tau_{h}"   # corner text
   grid     = True #and False
@@ -29,7 +31,7 @@ def plothist(xtitle,hists,ratio=False,logy=False,norm=False):
   LOG.header(fname)
   plot = Plot(xtitle,hists,norm=norm)
   plot.draw(ratio=ratio,logy=logy,ratiorange=rrange,lstyle=lstyle,grid=grid,staterr=staterr)
-  plot.drawlegend(header=header)
+  plot.drawlegend(position,header=header,width=width)
   plot.drawtext(text)
   plot.saveas(fname+".png")
   plot.saveas(fname+".pdf")
@@ -40,8 +42,7 @@ def plothist(xtitle,hists,ratio=False,logy=False,norm=False):
   print
   
 
-def createhists():
-  nhist    = 3
+def createhists(nhist=3):
   nbins    = 50
   xmin     = 0
   xmax     = 100

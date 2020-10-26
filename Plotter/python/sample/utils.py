@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 # Author: Izaak Neutelings (June 2020)
 import re, glob
-from TauFW.common.tools.utils import isnumber, islist, ensurelist, unwraplistargs, repkey
+from TauFW.common.tools.utils import isnumber, islist, ensurelist, unwraplistargs, quotestrs, repkey, getyear
 from TauFW.common.tools.file import ensuredir, ensureTFile, ensuremodule
 from TauFW.common.tools.log import Logger, color
 from TauFW.Plotter.plot.Variable import Variable, Var, ensurevar
+from TauFW.Plotter.plot.Selection import Selection, Sel
 import TauFW.Plotter.plot.CMSStyle as CMSStyle
 import ROOT; ROOT.PyConfig.IgnoreCommandLineOptions = True
 from ROOT import gDirectory, gROOT, TH1, THStack, kDotted, kBlack, kWhite
@@ -23,25 +24,29 @@ lumi_dict      = {
 xsecs_nlo = { # NLO cross sections to compute k-factor for stitching
   'DYJetsToLL_M-50':     3*2025.74,
   'DYJetsToLL_M-10to50':  18610.0,
-  'WJetsToLNu':            61526.7,
+  'WJetsToLNu':           61526.7,
 }
 
 
 def getsampleset(datasample,expsamples,sigsamples=[ ],**kwargs):
   """Create sample set from a table of data and MC samples."""
-  channel    = kwargs.get('channel',    ""  )
-  era        = kwargs.get('era',        ""  )
-  fpattern   = kwargs.get('file',       None)
-  weight     = kwargs.pop('weight',     ""  )
-  dataweight = kwargs.pop('dataweight', ""  )
+  channel    = kwargs.get('channel',    ""   )
+  era        = kwargs.get('era',        ""   )
+  fpattern   = kwargs.get('file',       None ) # file name pattern, e.g. $PICODIR/$SAMPLE_$CHANNEL$TAG.root
+  weight     = kwargs.pop('weight',     ""   ) # common weight for MC samples
+  dataweight = kwargs.pop('dataweight', ""   ) # weight for data samples
+  url        = kwargs.pop('url',        ""   ) # XRootD url
+  tag        = kwargs.pop('tag',        ""   ) # extra tag for file name
   
   if not fpattern:
-    fpattern = "$PICODIR/$SAMPLE_$CHANNEL.root"
+    fpattern = "$PICODIR/$SAMPLE_$CHANNEL$TAG.root"
   if '$PICODIR' in fpattern:
     import TauFW.PicoProducer.tools.config as GLOB
     CONFIG   = GLOB.getconfig(verb=0)
     picodir  = CONFIG['picodir']
     fpattern = repkey(fpattern,PICODIR=picodir)
+  if url:
+    fpattern = "%s/%s"%(fpattern,url)
   LOG.verb("getsampleset: fpattern=%r"%(fpattern),level=1)
   
   # MC (EXPECTED)
@@ -55,7 +60,7 @@ def getsampleset(datasample,expsamples,sigsamples=[ ],**kwargs):
       expkwargs.update(newkwargs)
     else:
       LOG.throw(IOError,"Did not recognize mc row %s"%(info))
-    fname = repkey(fpattern,ERA=era,GROUP=group,SAMPLE=name,CHANNEL=channel)
+    fname = repkey(fpattern,ERA=era,GROUP=group,SAMPLE=name,CHANNEL=channel,TAG=tag)
     #print fname
     sample = MC(name,title,fname,xsec,**expkwargs)
     expsamples[i] = sample
@@ -79,10 +84,11 @@ def getsampleset(datasample,expsamples,sigsamples=[ ],**kwargs):
     datakwargs.update(newkwargs)
   else:
     LOG.throw(IOError,"Did not recognize data row %s"%(datasample))
-  fnames   = glob.glob(repkey(fpattern,ERA=era,GROUP=group,SAMPLE=name,CHANNEL=channel))
+  fpattern = repkey(fpattern,ERA=era,GROUP=group,SAMPLE=name,CHANNEL=channel,TAG=tag)
+  fnames   = glob.glob(fpattern)
   #print fnames
   if len(fnames)==1:
-    datasample = Data(name,title,fnames)
+    datasample = Data(name,title,fnames[0])
   elif len(fnames)>1:
     namerexp = re.compile(name.replace('?','.').replace('*','.*'))
     name     = name.replace('?','').replace('*','')
@@ -92,7 +98,7 @@ def getsampleset(datasample,expsamples,sigsamples=[ ],**kwargs):
       #print setname
       datasample.add(Data(setname,'Observed',fname,**datakwargs))
   else:
-    LOG.throw(IOError,"Did not find data file %r"%(fnames))
+    LOG.throw(IOError,"Did not find data file %r"%(fpattern))
   
   # SAMPLE SET
   sampleset = SampleSet(datasample,expsamples,sigsamples,**kwargs)
@@ -102,7 +108,7 @@ def getsampleset(datasample,expsamples,sigsamples=[ ],**kwargs):
 def setera(era_,lumi_=None,**kwargs):
   """Set global era and integrated luminosity for Samples and CMSStyle."""
   global era, lumi, cme
-  era   = str(era_)
+  era   = str(era_).replace('UL',"")
   lumi  = kwargs.get('lumi',lumi_)
   if lumi==None:
     lumi = lumi_dict.get(era,None)
@@ -111,127 +117,162 @@ def setera(era_,lumi_=None,**kwargs):
   cme  = kwargs.get('cme', 13 )
   CMSStyle.setCMSEra(era,**kwargs)
   LOG.verb("setera: era = %r, lumi = %r/fb, cme = %r TeV"%(era,lumi,cme),kwargs,2)
+  if not lumi or lumi<0:
+    LOG.warning("Could not set luminosity for era %r... Returning %s"%(era,lumi))
   return lumi
-  
-
-def unwrap_MergedSamples_args(*args,**kwargs):
-  """
-  Help function to unwrap arguments for MergedSamples initialization:
-    - name (str)
-    - name, title (str, str)
-    - name, samples (str, list)
-    - name, title, samples (str, str, list)
-  where samples is a list of Sample objects.
-  """
-  strings = [ ]
-  name    = "noname"
-  title   = "No title"
-  samples = [ ]
-  #args    = unwraplistargs(args)
-  for arg in args:
-    if isinstance(arg,str):
-      strings.append(arg)
-    elif isinstance(arg,Sample):
-      samples.append(arg)
-    elif islist(arg) and all(isinstance(s,Sample) for s in arg):
-      for sample in arg:
-        samples.append(sample)
-  if len(strings)==1:
-    name, title = strings[0], strings[0]
-  elif len(strings)>1:
-    name, title = strings[:2]
-  elif len(samples)>1:
-    name, title = '-'.join([s.name for s in samples]), ', '.join([s.title for s in samples])
-  LOG.verb("unwrap_MergedSamples_args: name=%r, title=%r, samples=%s"%(name,title,samples),level=3)
-  return name, title, samples
   
 
 def unwrap_gethist_args(*args,**kwargs):
   """
   Help function to unwrap argument list that contain variable(s) and selection:
-    - variable, cuts
-    - varlist, cuts
-  where cuts is a string and variable can be
-    - xvar, nxbins, xmin, xmax (str, int, float, float)
-    - xvar, xbins (str, list)
-    - var (Variable)
-  or valist is a list of such variables.
+    gethist(str xvar, int nxbins, float xmin, float xmax, str cuts="")
+    gethist(str xvar, list xbins, str cuts="")
+    gethist(Variable xvar, str cuts="")
+    gethist(list varlist, str cuts="")
+  where varlist is a list of Variables objects, or a list of tuples defining a variable:
+    - [(str xvar, int nxbins, float xmin, float xmax), ... ]
+    - [(str xvar, list xbins), ... ]
+  Returns a list of Variable objects, a Selection object, and a boolean to flag a single
+  instead of a list of variables was given:
+    - (list vars, str cut, bool single)
+  For testing, see test/testUnwrapping.py.
   """
-  vars   = None  # list of Variable objects
-  sel    = None  # selection (string)
-  single = False # only one Variable passed
-  if len(args)==2:
-    vars   = args[0]
-    sel    = args[1]
+  vars   = None     # list of Variable objects
+  sel    = None     # selection (string or Selection object)
+  single = False    # only one Variable passed
+  if len(args)>=1:
+    if isinstance(args[-1],Selection):
+      sel   = args[-1]
+      vargs = args[:-1]
+    elif isinstance(args[-1],str):
+      sel   = Selection(args[-1])
+      vargs = args[:-1]
+    else:
+      sel   = Selection() # no selection given
+      vargs = args
+  if len(vargs)==1:
+    vars  = vargs[0]
     if isinstance(vars,Variable):
       vars   = [vars]
       single = True
-    elif islist(args[0]):
-      vars = [ensurevar(v) for v in args[0]]
-  elif len(args) in [3,5]:
-    vars   = [Variable(*args[len(args)-1])]
-    sel    = args[-1]
+    elif islist(vargs[0]):
+      vars = [ensurevar(v) for v in vargs[0]]
+  elif len(vargs) in [2,4]:
+    vars   = [Variable(*vargs)]
     single = True
   if vars==None or sel==None:
-    LOG.throw(IOError,'unwrap_gethist_args: Could not unwrap arguments %s, len(args)=%d, vars=%s, sel=%s.'%(args,len(args),vars,sel))
-  LOG.verb("unwrap_gethist_args: vars=%s, sel=%r, single=%r"%(vars,sel,single),level=3)
+    LOG.throw(IOError,'unwrap_gethist_args: Could not unwrap arguments %s, len(args)=%d, vars=%s, sel=%s.'%(
+                                                                       args,len(args),vars,sel.selection))
+  LOG.verb("unwrap_gethist_args: vars=%s, sel=%r, single=%r"%(vars,sel.selection,single),level=4)
   return vars, sel, single
   
 
-def unwrap_gethist_args_2D(*args,**kwargs):
+def unwrap_gethist2D_args(*args,**kwargs):
   """
-  Help function to unwrap argument list that contain variable(s) and selection:
-    - xvar, yvar, cuts
-    - xvarlist, yvarlist, cuts
-    - (xvar,yvar), cuts
-    - varlist, cuts
-    - xvar, nxbins, xmin, xmax, yvar, nybins, ymin, ymax, cuts
-  where xvar and yvar are Variable objects or arguments, and [xy]varlist is a list of such pairs.
+  Help function to unwrap argument list that contain variable pair(s) and selection:
+    gethist2D(str xvar, int nxbins, float xmin, float xmax, str yvar, int nybins, float ymin, float ymax, str cuts="")
+    gethist2D(str xvar, list xbins, str yvar, list ybins, str cuts="")
+    gethist2D(str xvar, int nxbins, float xmin, float xmax, str yvar, list ybins, str cuts="")
+    gethist2D(str xvar, list xbins, str yvar, int nybins, float ymin, float ymax, str cuts="")
+    gethist2D(Variable xvar, Variable yvar, str cuts="")
+    gethist2D(tuple xvar, tuple yvar, str cuts="")
+    gethist2D(list xvarlist, list yvarlist, str cuts="")
+    gethist2D(list varlist, str cuts="")
+    gethist2D(tuple varpair, str cuts="")
+  where the tuples xvar and yvar can be of the form
+    – (str xvar, int nxbins, float xmin, float xmax)
+    – (str xvar, list xbins)
+  and the [xy]varlist is a list of Variables object pairs,
+    - [(Variable xvar,Variable yvar), ... ]
+  or a list of tuples defining a variable:
+    - [(str xvar, int nxbins, float xmin, float xmax, str yvar, int nybins, float ymin, float ymax), ...]
+    - [(str xvar, list xbins), ...]
+  and varpair is tuple of a single pair of Variable objects:
+    - (Variable xvar,Variable yvar)
+  Returns a list of Variable pairs, a Selection object, and a boolean to flag a single
+  instead of a list of variables was given:
+    (list varpairs, str cut, bool single)
+  For testing, see test/testUnwrapping.py.
   """
-  vars   = None  # list of Variable objects
-  sel    = None  # selection (string)
-  single = False # only one pair of Variable objects passed
-  if len(args)==2:
-    vars, sel = args
-    single = len(vars)==2 and islist(vars) and isinstance(vars[0],Variable) and isinstance(vars[1],Variable)
+  verbosity = LOG.getverbosity(kwargs)
+  vars   = None     # list of Variable objects
+  sel    = None     # selection (string or Selection object)
+  single = False    # only one Variable passed
+  if len(args)>=1:
+    if isinstance(args[-1],Selection):
+      sel   = args[-1]
+      vargs = args[:-1]
+    elif isinstance(args[-1],str):
+      sel   = Selection(args[-1])
+      vargs = args[:-1]
+    else:
+      sel   = Selection() # no selection given
+      vargs = args
+  if len(vargs)==1:
+    vars = vargs[0]
+    single = len(vars)==2 and islist(vars) and all(isinstance(v,Variable) for v in vars)
     if single:
       vars = [vars]
-  elif len(args)==3:
-    xvars, yvars, sel = args
+  elif len(vargs)==2:
+    xvars, yvars = vargs
     if isinstance(xvars,Variable) and isinstance(yvars,Variable):
       vars = [(xvars,yvars)]
       single = True
-    elif all(isinstance(v,Variable) for v in xvars+yvars):
+    elif all(isinstance(v,Variable) for v in xvars+yvars): # assume list
       vars = zip(xvars,yvars)
-    elif len(xvars) in [3,5] and len(yvars) in [3,5]:
+    elif len(xvars) in [2,4] and len(yvars) in [2,4] and isinstance(xvars[0],str) and isinstance(yvars[0],str):
       vars = [Variable(*xvars),Variable(*yvars)]
       single = True
-  elif len(args)==9:
-    vars   = [Variable(*args[0:4]),Variable(*args[4:8])]
-    sel    = args[-1]
+    elif islist(xvars) and islist(yvars) and all(islist(x) for x in xvars) and all(islist(y) for y in yvars):
+      vars = [(Variable(*x),Variable(*y)) for x, y in zip(xvars,yvars)]
+  elif len(vargs)==4:
+    vars   = [(Variable(*vargs[0:2]),Variable(*vargs[2:4]))]
+    single = True
+  elif len(vargs)==6:
+    if isinstance(vargs[2],str):
+      vars   = [(Variable(*vargs[0:2]),Variable(*vargs[2:6]))]
+      single = True
+    elif isinstance(vargs[4],str):
+      vars   = [(Variable(*vargs[0:4]),Variable(*vargs[4:6]))]
+      single = True
+  elif len(vargs)==8:
+    vars   = [(Variable(*vargs[0:4]),Variable(*vargs[4:8]))]
     single = True
   if vars==None or sel==None:
-    LOG.throw(IOError,'unwrap_gethist_args_2D: Could not unwrap arguments %s, len(args)=%d, vars=%s, sel=%s.'%(args,len(args),vars,sel))
-  LOG.verb("unwrap_gethist_args_2D: vars=%s, sel=%r, single=%r"%(vars,sel,single),level=3)
+    LOG.throw(IOError,'unwrap_gethist2D_args: Could not unwrap arguments %s, len(args)=%d, vars=%s, sel=%s.'%(args,len(args),vars,sel))
+  elif isinstance(sel,str):
+    sel = Selection(str)
+  LOG.verb("unwrap_gethist2D_args: args=%r"%(args,),verbosity,3)
+  LOG.verb("unwrap_gethist2D_args: vars=%s, sel=%r, single=%r"%(vars,sel.selection,single),verbosity,4)
   return vars, sel, single
   
 
 def getsample(samples,*searchterms,**kwargs):
   """Help function to get all samples corresponding to some name and optional label."""
   verbosity   = LOG.getverbosity(kwargs)
-  filename    = kwargs.get('filename', ""    )
+  filename    = kwargs.get('fname',    ""    )
   unique      = kwargs.get('unique',   False )
-  warning     = kwargs.get('warning',  True  )
-  inclusive   = kwargs.get('incl',     True  )
+  warning     = kwargs.get('warn',     True  )
+  split       = kwargs.get('split',    False )
   matches     = [ ]
+  if split:
+    newsamples = [ ]
+    for sample in samples:
+      if sample.splitsamples:
+        LOG.verb("getsample: Splitting sample %s..."%(sample.name),verbosity,3)
+        newsamples.extend(sample.splitsamples)
+      else:
+        newsamples.append(sample)
+    samples = newsamples
   for sample in samples:
-    if sample.match(*searchterms,incl=inclusive) and filename in sample.filename:
+    if sample.match(*searchterms,**kwargs) and filename in sample.filename:
       matches.append(sample)
   if not matches and warning:
-    LOG.warning("getsample: Could not find a sample with search terms %s..."%(', '.join(searchterms+(filename,))))
+    LOG.warning("getsample: Could not find a sample with search terms %s..."%(quotestrs(searchterms+(filename,))))
   elif unique:
     if len(matches)>1:
-      LOG.warning("getsample: Found more than one match to %s. Using first match only: %s"%(", ".join(searchterms),", ".join([s.name for s in matches])))
+      LOG.warning("getsample: Found more than one match to %s. Using first match only: %s"%(
+                  quotestrs(searchterms),quotestrs(matches)))
     return matches[0]
   return matches
   
@@ -239,17 +280,16 @@ def getsample(samples,*searchterms,**kwargs):
 def getsample_with_flag(samples,flag,*searchterms,**kwargs):
   """Help function to get sample with some flag from a list of samples."""
   matches   = [ ]
-  inclusive = kwargs.get('incl',   True  )
   unique    = kwargs.get('unique', False )
   for sample in samples:
     if hasattr(sample,flag) and getattr(sample,flag) and\
-       (not searchterms or sample.match(*searchterms,incl=inclusive)):
+       (not searchterms or sample.match(*searchterms,**kwargs)):
       matches.append(sample)
   if not matches:
-    LOG.warning("Could not find a signal sample...")
+    LOG.warning("Could not find a sample with %r=True..."%flag)
   elif unique:
     if len(matches)>1:
-      LOG.warning("Found more than one signal sample. Using first match only: %s"%(", ".join([s.name for s in matches])))
+      LOG.warning("Found more than one signal sample. Using first match only: %s"%(quotestrs(s.name for s in matches)))
     return matches[0]
   return matches
   
@@ -257,14 +297,14 @@ def getsample_with_flag(samples,flag,*searchterms,**kwargs):
 def join(samplelist,*searchterms,**kwargs):
   """Join samples from a sample list into one merged sample, that match a set of search terms.
   E.g. samplelist = join(samplelist,'DY','M-50',name='DY_highmass')."""
-  verbosity = LOG.getverbosity(kwargs,1)
+  verbosity = LOG.getverbosity(kwargs)
   name      = kwargs.get('name',  searchterms[0] ) # name of new merged sample
   title     = kwargs.get('title', None           ) # title of new merged sample
   color     = kwargs.get('color', None           ) # color of new merged sample
   LOG.verbose("join: merging '%s' into %r"%("', '".join(searchterms),name),verbosity,level=1)
   
   # GET samples containing names and searchterm
-  mergelist = [s for s in samplelist if s.match(*searchterms,incl=False)]
+  mergelist = [s for s in samplelist if s.match(*searchterms,incl=True)]
   if len(mergelist)<=1:
     LOG.warning("Could not merge %r: fewer than two %r samples (%d)"%(name,name,len(mergelist)))
     return samplelist
@@ -295,12 +335,12 @@ def join(samplelist,*searchterms,**kwargs):
 def stitch(samplelist,*searchterms,**kwargs):
   """Stitching samples: merge samples and reweight inclusive
   sample and rescale jet-binned samples, e.g. DY*Jets or W*Jets."""
-  verbosity = LOG.getverbosity(kwargs,1)
+  verbosity = LOG.getverbosity(kwargs)
   name      = kwargs.get('name',    searchterms[0] )
   name_incl = kwargs.get('incl',    searchterms[0] ) # name of inclusive sample
   xsec_incl = kwargs.get('xsec',    None           ) # (N)NLO cross section to compute k-factor
   kfactor   = kwargs.get('kfactor', None           ) # k-factor
-  npartvar  = kwargs.get('npart',   'NUP'          ) # variable name of number of partons
+  npartvar  = kwargs.get('npart',   'NUP'          ) # variable name of number of partons; 'NUP', 'LHE_Njets', ...
   LOG.verbose("stitch: rescale, reweight and merge %r samples"%(name),verbosity,level=1)
   
   # GET list samples to-be-stitched
@@ -314,7 +354,7 @@ def stitch(samplelist,*searchterms,**kwargs):
     if len(stitchlist)==0:
       return samplelist
   name  = kwargs.get('name',stitchlist[0].name)
-  title = kwargs.get('title',stitchlist[0].title)
+  title = kwargs.get('title',gettitle(name,stitchlist[0].title))
   
   # FIND inclusive sample
   sample_incls = [s for s in stitchlist if s.match(name_incl)]
@@ -415,13 +455,15 @@ def getxsec_nlo(*searchterms,**kwargs):
   for searchterm in searchterms:
     if 'DY' in searchterm:
       if any('10to50' in s for s in searchterms):
-        xsec_nlo = xsecs_nlo['DYJetsToLL_M-10to50']
-        break
+        key ='DYJetsToLL_M-10to50'
       else:
-        xsec_nlo = xsecs_nlo['DYJetsToLL_M-50']
-        break
+        key = 'DYJetsToLL_M-50'
     elif 'WJ' in searchterm:
-      xsec_nlo = xsecs_nlo['WJetsToLNu']
+      key = 'WJetsToLNu'
+    elif searchterm in xsecs_nlo:
+      key = searchterm
+    if key in xsecs_nlo:
+      xsec_nlo = xsecs_nlo[key]
       break
   else:
     LOG.warning("getxsec_nlo: Did not find a DY or WJ match in '%s'!"%("', '".join(searchterms)))

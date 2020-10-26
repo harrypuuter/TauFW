@@ -3,6 +3,7 @@
 import os, re
 from TauFW.PicoProducer import datadir
 from TauFW.common.tools.file import ensurefile
+from TauFW.common.tools.utils import getyear
 
 
 def getjson(era,dtype='data'):
@@ -10,34 +11,36 @@ def getjson(era,dtype='data'):
   # https://twiki.cern.ch/twiki/bin/viewauth/CMS/TWikiLUM
   # https://twiki.cern.ch/twiki/bin/viewauth/CMS/PdmV2016Analysis
   json = None
+  year = getyear(era)
   if dtype=='data':
-    if era==2016:
+    if year==2016:
       json = 'Cert_271036-284044_13TeV_ReReco_07Aug2017_Collisions16_JSON.txt'
-    elif era==2017:
+    elif year==2017:
       json = 'Cert_294927-306462_13TeV_PromptReco_Collisions17_JSON.txt'
     else:
       json = 'Cert_314472-325175_13TeV_PromptReco_Collisions18_JSON.txt'
-  json = ensurefile(datadir,'json',json)
+  json = ensurefile(datadir,'json',str(year),json)
   return json
   
 
-def getera(filename,year,dtype='data'):
-  """Get era of data filename."""
-  era = ""
+def getperiod(filename,year=None,dtype='data'):
+  """Get run era/period (A-H) of data filename containing Run20[0-4][0-9][A-Z].
+  If the optional parameter 'year' is given, double check match corresponds."""
+  period = ""
   if dtype=='data':
     if isinstance(filename,list):
       filename = filename[0]
-    matches = re.findall(r"Run(201[678])([A-Z]+)",filename)
+    matches = re.findall(r"Run(20[0-4][0-9])([A-Z]+)",filename)
     if not matches:
       print "Warning! Could not find an era in %s"%filename
-    elif year!=matches[0][0]:
-      print "Warning! Given year does not match the data file %s"%filename
+    elif year and str(year)!=matches[0][0]:
+      print "Warning! Given year (%r) does not match the data file %s (%r)"%(year,filename,''.join(matches[0]))
     else:
-      era = matches[0][1]
-  return era
+      period = matches[0][1]
+  return period
   
 
-def getjmecalib(year,era="",redoJEC=False,doSys=False,dtype='data'):
+def getjmecalib(era,period="",redoJEC=False,doSys=False,dtype='data'):
   """Get JME calibrator for dataset of a given year and era."""
   # https://twiki.cern.ch/twiki/bin/view/CMS/JECDataMC
   # https://twiki.cern.ch/twiki/bin/view/CMS/JetResolution
@@ -48,38 +51,41 @@ def getjmecalib(year,era="",redoJEC=False,doSys=False,dtype='data'):
   # https://github.com/cms-nanoAOD/nanoAOD-tools/blob/master/python/postprocessing/modules/jme/jetmetUncertainties.py
   #from PhysicsTools.NanoAODTools.postprocessing.modules.jme import jetmetUncertainties
   #from PhysicsTools.NanoAODTools.postprocessing.modules.jme.jetmetUncertainties import jetmetUncertaintiesProducer
-  from PhysicsTools.NanoAODTools.postprocessing.modules.jme import jetRecalib
+  #from PhysicsTools.NanoAODTools.postprocessing.modules.jme import jetRecalib
   from PhysicsTools.NanoAODTools.postprocessing.modules.jme.jetmetHelperRun2 import createJMECorrector
+  year = getyear(era) # get year as integer
   if dtype=='data':
-    calibrators = { }
-    if year==2016:
-      calibrators = {
-        'BCD': jetRecalib.jetRecalib2016BCD,
-        'EF':  jetRecalib.jetRecalib2016EF,
-        'GH':  jetRecalib.jetRecalib2016GH,
-      }
-    elif year==2017:
-      calibrators = {
-        'B':  jetRecalib.jetRecalib2017B,
-        'C':  jetRecalib.jetRecalib2017C,
-        'DE': jetRecalib.jetRecalib2017DE,
-        'F':  jetRecalib.jetRecalib2017F,
-      }
-    else:
-      calibrators = {
-        'A': jetRecalib.jetRecalib2018A,
-        'B': jetRecalib.jetRecalib2018B,
-        'C': jetRecalib.jetRecalib2018C,
-        'D': jetRecalib.jetRecalib2018D,
-      }
-    for eraset in calibrators:
-      if era in eraset:
-        return calibrators[eraset]()
-    raise "Could not find an appropiate calibrator for year %s and era %s..."%(year,era)
+    #calibrators = { }
+    #if year==2016:
+    #  calibrators = {
+    #    'BCD': jetRecalib.jetRecalib2016BCD,
+    #    'EF':  jetRecalib.jetRecalib2016EF,
+    #    'GH':  jetRecalib.jetRecalib2016GH,
+    #  }
+    #elif year==2017:
+    #  calibrators = {
+    #    'B':  jetRecalib.jetRecalib2017B,
+    #    'C':  jetRecalib.jetRecalib2017C,
+    #    'DE': jetRecalib.jetRecalib2017DE,
+    #    'F':  jetRecalib.jetRecalib2017F,
+    #  }
+    #else:
+    #  calibrators = {
+    #    'A': jetRecalib.jetRecalib2018A,
+    #    'B': jetRecalib.jetRecalib2018B,
+    #    'C': jetRecalib.jetRecalib2018C,
+    #    'D': jetRecalib.jetRecalib2018D,
+    #  }
+    #for eraset in calibrators:
+    #  if period in eraset:
+    #    return calibrators[eraset]()
+    #raise "Could not find an appropiate calibrator for year %s and era %s..."%(year,period)
+    return createJMECorrector(False,era,runPeriod=period,jesUncert=jmeUncs,redojec=redoJEC,jetType='AK4PFchs',
+                              noGroom=True,metBranchName=MET,applySmearing=False)()
   else:
     jmeUncs = 'Total' if doSys else ''
-    MET     = 'METFixEE2017' if year==2017 else 'MET'
-    return createJMECorrector(True,year,jesUncert=jmeUncs,redojec=redoJEC,jetType='AK4PFchs',
+    MET     = 'METFixEE2017' if (year==2017 and 'UL' not in era) else 'MET'
+    return createJMECorrector(True,era,jesUncert=jmeUncs,redojec=redoJEC,jetType='AK4PFchs',
                               noGroom=True,metBranchName=MET,applySmearing=True)()
     #if year==2016:
     #  #jetmetUncertainties2016 = jetmetUncertaintiesProducer("2016", "Summer16_07Aug2017_V11_MC", jesUncs)

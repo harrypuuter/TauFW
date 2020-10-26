@@ -2,16 +2,13 @@
 # Description: Simple module to pre-select mutau events
 import sys
 import numpy as np
-from PhysicsTools.NanoAODTools.postprocessing.framework.postprocessor import PostProcessor
-from PhysicsTools.NanoAODTools.postprocessing.framework.datamodel import Collection
-from PhysicsTools.NanoAODTools.postprocessing.framework.eventloop import Module
 from TauFW.PicoProducer import datadir
 from TauFW.PicoProducer.analysis.TreeProducerETau import *
 from TauFW.PicoProducer.analysis.ModuleTauPair import *
-from TauFW.PicoProducer.analysis.utils import LeptonTauPair, loosestIso, idIso
+from TauFW.PicoProducer.analysis.utils import LeptonTauPair, loosestIso, idIso, matchgenvistau, matchtaujet
 from TauFW.PicoProducer.corrections.ElectronSFs import *
-from TauFW.PicoProducer.corrections.TrigObjMatcher import loadTriggerDataFromJSON, TrigObjMatcher
-from TauPOG.TauIDSFs.TauIDSFTool import TauIDSFTool, TauESTool
+from TauFW.PicoProducer.corrections.TrigObjMatcher import TrigObjMatcher
+from TauPOG.TauIDSFs.TauIDSFTool import TauIDSFTool, TauESTool, TauFESTool
 
 
 class ModuleETau(ModuleTauPair):
@@ -23,8 +20,7 @@ class ModuleETau(ModuleTauPair):
     
     # TRIGGERS
     jsonfile       = os.path.join(datadir,"trigger/tau_triggers_%d.json"%(self.year))
-    trigdata       = loadTriggerDataFromJSON(jsonfile,isdata=self.isdata)
-    self.trigger   = TrigObjMatcher(trigdata.combdict['SingleElectron'])
+    self.trigger   = TrigObjMatcher(jsonfile,trigger='SingleElectron',isdata=self.isdata)
     self.eleCutPt  = self.trigger.ptmins[0]
     self.tauCutPt  = 20
     self.eleCutEta = 2.3
@@ -32,8 +28,9 @@ class ModuleETau(ModuleTauPair):
     
     # CORRECTIONS
     if self.ismc:
-      self.eleSFs  = ElectronSFs(year=self.year)
-      self.tesTool = TauESTool(tauSFVersion[self.year])
+      self.eleSFs  = ElectronSFs(year=self.year) # electron id/iso/trigger SFs
+      self.tesTool = TauESTool(tauSFVersion[self.year]) # real tau energy scale corrections
+      self.fesTool = TauFESTool(tauSFVersion[self.year]) # e -> tau fake energy scale
       self.tauSFs  = TauIDSFTool(tauSFVersion[self.year],'DeepTau2017v2p1VSjet','Tight')
       self.etfSFs  = TauIDSFTool(tauSFVersion[self.year],'DeepTau2017v2p1VSe',  'VLoose')
       self.mtfSFs  = TauIDSFTool(tauSFVersion[self.year],'DeepTau2017v2p1VSmu', 'Tight')
@@ -51,6 +48,7 @@ class ModuleETau(ModuleTauPair):
   def beginJob(self):
     """Before processing any events or files."""
     super(ModuleETau,self).beginJob()
+    print ">>> %-12s = %s"%('tauwp',      self.tauwp)
     print ">>> %-12s = %s"%('eleCutPt',   self.eleCutPt)
     print ">>> %-12s = %s"%('eleCutEta',  self.eleCutEta)
     print ">>> %-12s = %s"%('tauCutPt',   self.tauCutPt)
@@ -87,7 +85,7 @@ class ModuleETau(ModuleTauPair):
     self.out.cutflow.fill('trig')
     
     
-    ##### MUON #######################################
+    ##### ELECTRON ###################################
     electrons = [ ]
     for electron in Collection(event,'Electron'):
       #if self.ismc and self.ees!=1:
@@ -114,33 +112,42 @@ class ModuleETau(ModuleTauPair):
       if abs(tau.dz)>0.2: continue
       if tau.decayMode not in [0,1,10,11]: continue
       if abs(tau.charge)!=1: continue
+      if tau.idDeepTau2017v2p1VSe<1: continue  # VVVLoose
+      if tau.idDeepTau2017v2p1VSmu<1: continue # VLoose
+      if tau.idDeepTau2017v2p1VSjet<self.tauwp: continue
       if self.ismc:
+        tau.es   = 1 # store energy scale for propagating to MET
         genmatch = tau.genPartFlav
         if genmatch==5: # real tau
-          tes = 1
-          if self.tes!=None:
-            tes *= self.tes
-          else:
-            tes *= self.tesTool.getTES(tau.pt,tau.decayMode,unc=self.tessys)
+          if self.tes!=None: # user-defined energy scale (for TES studies)
+            tes = self.tes
+          else: # (apply by default)
+            tes = self.tesTool.getTES(tau.pt,tau.decayMode,unc=self.tessys)
           if tes!=1:
             tau.pt   *= tes
             tau.mass *= tes
-        elif self.ltf!=1.0 and 0<genmatch<5: # lepton -> tau fake
+            tau.es    = tes
+        elif self.ltf and 0<genmatch<5: # lepton -> tau fake
           tau.pt   *= self.ltf
           tau.mass *= self.ltf
+          tau.es    = self.ltf
+        elif genmatch in [1,3]: # electron -> tau fake (apply by default, override with 'ltf=1.0')
+          fes = self.fesTool.getFES(tau.eta,tau.decayMode,unc=self.fes)
+          tau.pt   *= fes
+          tau.mass *= fes
+          tau.es    = fes
         elif self.jtf!=1.0 and genmatch==0: # jet -> tau fake
           tau.pt   *= self.jtf
           tau.mass *= self.jtf
+          tau.es    = self.jtf
       if tau.pt<self.tauCutPt: continue
-      if tau.idDeepTau2017v2p1VSe<1: continue
-      if tau.idDeepTau2017v2p1VSmu<1: continue
       taus.append(tau)
     if len(taus)==0:
       return False
     self.out.cutflow.fill('tau')
     
     
-    ##### MUTAU PAIR #################################
+    ##### ETAU PAIR ##################################
     ltaus = [ ]
     for electron in electrons:
       for tau in taus:
@@ -157,8 +164,8 @@ class ModuleETau(ModuleTauPair):
     
     
     # VETOS
-    extramuon_veto, extraelec_veto, dilepton_veto = getLeptonVetoes(event,[electron],[ ],[tau],self.channel)
-    self.out.extramuon_veto[0], self.out.extraelec_veto[0], self.out.dilepton_veto[0] = getLeptonVetoes(event,[electron],[ ],[ ],self.channel)
+    extramuon_veto, extraelec_veto, dilepton_veto = getlepvetoes(event,[electron],[ ],[tau],self.channel)
+    self.out.extramuon_veto[0], self.out.extraelec_veto[0], self.out.dilepton_veto[0] = getlepvetoes(event,[electron],[ ],[ ],self.channel)
     self.out.lepton_vetoes[0]       = self.out.extramuon_veto[0] or self.out.extraelec_veto[0] or self.out.dilepton_veto[0]
     self.out.lepton_vetoes_notau[0] = extramuon_veto or extraelec_veto or dilepton_veto
     
@@ -167,7 +174,7 @@ class ModuleETau(ModuleTauPair):
     self.fillEventBranches(event)
     
     
-    # MUON
+    # ELECTRON
     self.out.pt_1[0]                       = electron.pt
     self.out.eta_1[0]                      = electron.eta
     self.out.phi_1[0]                      = electron.phi
@@ -243,15 +250,10 @@ class ModuleETau(ModuleTauPair):
     
     # JETS
     jets, met, njets_vars, met_vars = self.fillJetBranches(event,electron,tau)
-    if tau.jetIdx>=0:
-      self.out.jpt_match_2[0] = event.Jet_pt[tau.jetIdx]
-      if self.ismc:
-        if event.Jet_genJetIdx[tau.jetIdx]>=0:
-          self.out.jpt_genmatch_2[0] = event.GenJet_pt[event.Jet_genJetIdx[tau.jetIdx]]
-        else:
-          self.out.jpt_genmatch_2[0] = -1
+    if self.ismc:
+      self.out.jpt_match_2[0], self.out.jpt_genmatch_2[0] = matchtaujet(event,tau,self.ismc)
     else:
-      self.out.jpt_match_2[0] = -1
+      self.out.jpt_match_2[0] = matchtaujet(event,tau,self.ismc)[0]
     
     
     # WEIGHTS
@@ -288,7 +290,7 @@ class ModuleETau(ModuleTauPair):
     
     
     # MET & DILEPTON VARIABLES
-    self.fillMETAndDiLeptonBranches(event,electron.tlv,tau.tlv,met,met_vars)
+    self.fillMETAndDiLeptonBranches(event,electron,tau,met,met_vars)
     
     
     self.out.fill()

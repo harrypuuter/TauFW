@@ -1,14 +1,16 @@
 from TauFW.PicoProducer.storage.Sample import MC as M
 from TauFW.PicoProducer.storage.Sample import Data as D
-storage  = "/pnfs/psi.ch/cms/trivcat/store/user/ineuteli/samples/NANOAOD_2017/$PATH"
+storage  = "/pnfs/psi.ch/cms/trivcat/store/user/$USER/samples/NANOAOD_2017/$PATH"
 url      = None #"root://cms-xrd-global.cern.ch/"
 filelist = None #"samples/files/2016/$SAMPLE.txt"
 samples  = [
   
   # DRELL-YAN
   M('DY','DYJetsToLL_M-50',
-    "/DYJetsToLL_M-50_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv5_PU2017RECOSIMstep_12Apr2018_v1-DeepTauv2p1_TauPOG-v1/USER",
-    "/DYJetsToLL_M-50_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv5_PU2017RECOSIMstep_12Apr2018_ext1_v1-DeepTauv2p1_TauPOG-v1/USER",
+    #"/DYJetsToLL_M-50_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv5_PU2017RECOSIMstep_12Apr2018_v1-DeepTauv2p1_TauPOG-v1/USER", # BUGGY PU
+    #"/DYJetsToLL_M-50_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv5_PU2017RECOSIMstep_12Apr2018_ext1_v1-DeepTauv2p1_TauPOG-v1/USER", # BUGGY PU
+    "/DYJetsToLL_M-50_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv6-PU2017RECOSIMstep_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v1/NANOAODSIM", # BUGGY PU
+    "/DYJetsToLL_M-50_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv6-PU2017RECOSIMstep_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7_ext1-v1/NANOAODSIM", # BUGGY PU
     store=storage,url=url,file=filelist,opts='zpt=True',
   ),
   M('DY','DY1JetsToLL_M-50',
@@ -50,33 +52,126 @@ samples  = [
     store=storage,url=url,file=filelist,opts='toppt=True',
   ),
   
+  # W+JETS
+  M('WJ','WJetsToLNu',
+    "/WJetsToLNu_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    "/WJetsToLNu_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7_ext1-v1/NANOAODSIM",
+    store=storage,url=url,file=filelist,
+  ),
+  M('WJ','W1JetsToLNu',
+    "/W1JetsToLNu_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    store=storage,url=url,file=filelist,
+  ),
+  M('WJ','W2JetsToLNu',
+    "/W2JetsToLNu_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    store=storage,url=url,file=filelist,
+  ),
+  M('WJ','W3JetsToLNu',
+    ###"/W3JetsToLNu_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v2/NANOAODSIM", # BUGGY PU
+    "/W3JetsToLNu_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_ext_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    store=storage,url=url,file=filelist,
+  ),
+  M('WJ','W4JetsToLNu',
+    "/W4JetsToLNu_TuneCP5_13TeV-madgraphMLM-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_new_pmx_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    store=storage,url=url,file=filelist,
+  ),
+  
+  # SINGLE TOP
+  M('ST','ST_tW_antitop',
+    "/ST_tW_antitop_5f_inclusiveDecays_TuneCP5_13TeV-powheg-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    ###"/ST_tW_antitop_5f_inclusiveDecays_TuneCP5_PSweights_13TeV-powheg-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    store=storage,url=url,file=filelist,
+  ),
+  M('ST','ST_tW_top',
+    "/ST_tW_top_5f_inclusiveDecays_TuneCP5_13TeV-powheg-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    ###"/ST_tW_top_5f_inclusiveDecays_TuneCP5_PSweights_13TeV-powheg-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_new_pmx_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    store=storage,url=url,file=filelist,
+  ),
+  M('ST','ST_t-channel_antitop',
+    "/ST_t-channel_antitop_4f_InclusiveDecays_TuneCP5_PSweights_13TeV-powheg-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    store=storage,url=url,file=filelist,
+  ),
+  M('ST','ST_t-channel_top',
+    "/ST_t-channel_top_4f_InclusiveDecays_TuneCP5_PSweights_13TeV-powheg-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    store=storage,url=url,file=filelist,
+  ),
+  
+  # DIBOSON
+  M('VV','WW',
+    "/WW_TuneCP5_13TeV-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    store=storage,url=url,file=filelist,
+  ),
+  M('VV','WZ',
+    "/WZ_TuneCP5_13TeV-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v1/NANOAODSIM",
+    ###"/WZ_TuneCP5_13TeV-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7_ext1-v1/NANOAODSIM", # BUGGY PU
+    store=storage,url=url,file=filelist,
+  ),
+  M('VV','ZZ',
+    "/ZZ_TuneCP5_13TeV-pythia8/RunIIFall17NanoAODv6-PU2017_12Apr2018_Nano25Oct2019_102X_mc2017_realistic_v7-v2/NANOAODSIM",
+    store=storage,url=url,file=filelist,
+  ),
+  
   # SINGLE MUON
-  D('Data','SingleMuon_Run2017B', "/SingleMuon/Run2017B-Nano25Oct2019-v1/NANOAOD",
-    store=storage,url=url,file=filelist,channels=['mutau','mumu'],
+  D('Data','SingleMuon_Run2017B',"/SingleMuon/Run2017B-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'mutau','mumu','emu'],
   ),
-  D('Data','SingleMuon_Run2017C', "/SingleMuon/Run2017C-Nano25Oct2019-v1/NANOAOD",
-    store=storage,url=url,file=filelist,channels=['mutau','mumu'],
+  D('Data','SingleMuon_Run2017C',"/SingleMuon/Run2017C-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'mutau','mumu','emu'],
   ),
-  D('Data','SingleMuon_Run2017D', "/SingleMuon/Run2017D-Nano25Oct2019-v1/NANOAOD",
-    store=storage,url=url,file=filelist,channels=['mutau','mumu'],
+  D('Data','SingleMuon_Run2017D',"/SingleMuon/Run2017D-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'mutau','mumu','emu'],
   ),
-  D('Data','SingleMuon_Run2017E', "/SingleMuon/Run2017E-Nano25Oct2019-v1/NANOAOD",
-    store=storage,url=url,file=filelist,channels=['mutau','mumu'],
+  D('Data','SingleMuon_Run2017E',"/SingleMuon/Run2017E-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'mutau','mumu','emu'],
   ),
-  D('Data','SingleMuon_Run2017F', "/SingleMuon/Run2017F-Nano25Oct2019-v1/NANOAOD",
-    store=storage,url=url,file=filelist,channels=['mutau','mumu'],
-  ),
-  
-  # LQ
-  M('LQ','SLQ_single_M1100_L1p0_old',
-    "/LQ_Single_M1000/LegacyRun2_2017_deepTauIDv2p1/USER",
-    store=storage,url=url,file=filelist,nfilesperjob=30,
+  D('Data','SingleMuon_Run2017F',"/SingleMuon/Run2017F-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'mutau','mumu','emu'],
   ),
   
-  # LQ
-  M('LQ','SLQ_single_M1100_L1p0',
-    "/SingleScalarLQ_InclusiveDecay_M-1100_L-1p0_TuneCP2_13TeV-madgraph-pythia8/RunIIFall17NanoAODv7-PU2017_12Apr2018_Nano02Apr2020_102X_mc2017_realistic_v8-v1/NANOAODSIM",
-    #store=storage,url=url,file=filelist,
+  # SINGLE ELECTRON
+  D('Data','SingleElectron_Run2017B',"/SingleElectron/Run2017B-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'etau','ee'],
   ),
+  D('Data','SingleElectron_Run2017C',"/SingleElectron/Run2017C-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'etau','ee'],
+  ),
+  D('Data','SingleElectron_Run2017D',"/SingleElectron/Run2017D-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'etau','ee'],
+  ),
+  D('Data','SingleElectron_Run2017E',"/SingleElectron/Run2017E-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'etau','ee'],
+  ),
+  D('Data','SingleElectron_Run2017F',"/SingleElectron/Run2017F-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'etau','ee'],
+  ),
+  
+  # TAU
+  D('Data','Tau_Run2017B',"/Tau/Run2017B-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'tautau'],
+  ),
+  D('Data','Tau_Run2017C',"/Tau/Run2017C-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'tautau'],
+  ),
+  D('Data','Tau_Run2017D',"/Tau/Run2017D-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'tautau'],
+  ),
+  D('Data','Tau_Run2017E',"/Tau/Run2017E-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'tautau'],
+  ),
+  D('Data','Tau_Run2017F',"/Tau/Run2017F-Nano25Oct2019-v1/NANOAOD",
+    store=storage,url=url,file=filelist,channels=["skim*",'tautau'],
+  ),
+  
+  ## LQ
+  #M('LQ','SLQ_single_M1100_L1p0_old',
+  #  "/LQ_Single_M1000/LegacyRun2_2017_deepTauIDv2p1/USER",
+  #  store=storage,url=url,file=filelist,nfilesperjob=30,
+  #),
+  #
+  ## LQ
+  #M('LQ','SLQ_single_M1100_L1p0',
+  #  "/SingleScalarLQ_InclusiveDecay_M-1100_L-1p0_TuneCP2_13TeV-madgraph-pythia8/RunIIFall17NanoAODv7-PU2017_12Apr2018_Nano02Apr2020_102X_mc2017_realistic_v8-v1/NANOAODSIM",
+  #  #store=storage,url=url,file=filelist,
+  #),
   
 ]

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 # Author: Izaak Neutelings (2017)
 import re
-from math import sqrt, pow, log
 from array import array
 from copy import copy, deepcopy
 from ROOT import TH1D, TH2D
@@ -13,54 +12,57 @@ from TauFW.Plotter.plot.utils import LOG, isnumber, islist, ensurelist, unwrapli
 class Variable(object):
   """
   Variable class to:
-     - hold all relevant information of a variable that will be plotted;
-         var name, filename friendly name, LaTeX friendly title, binning, ...
-     - allow for variable binning into TH1
-     - allow for contextual binning, i.e. depending on channel/selection/...
-     - easy string conversions: filename, LaTeX, ...
-     - analysis-specific operations: applying variations, ...
+   - hold all relevant information of a variable that will be plotted;
+       var name, filename friendly name, LaTeX friendly title, binning, ...
+   - allow for variable binning into TH1
+   - allow for contextual binning, i.e. depending on channel/selection/...
+   - easy string conversions: filename, LaTeX, ...
+   - analysis-specific operations: applying variations, ...
   """
   
   def __init__(self, name, *args, **kwargs):
-    strings              = [a for a in args if isinstance(a,str) ]
-    self.name            = name
-    self.name_           = name # backup for addoverflow
-    self.title           = strings[0] if strings else self.name
-    self.filename        = makefilename(self.name.replace('/',"_"))
-    self.title           = kwargs.get('title',       self.title    ) # for plot axes
-    self.filename        = kwargs.get('fname',       self.filename ) # for file
-    self.filename        = self.filename.replace('$NAME',self.name).replace('$VAR',self.name) #.replace('$FILE',self.filename)
-    self.tag             = kwargs.get('tag',         ""            )
-    self.units           = kwargs.get('units',       True          ) # for plot axes
-    self.latex           = kwargs.get('latex',       True          ) # for plot axes
-    self.nbins           = None
-    self.min             = None
-    self.max             = None
-    self.bins            = None
-    self.cut             = kwargs.get('cut',         ""            ) # extra cut when filling histograms
-    self.weight          = kwargs.get('weight',      ""            ) # extra weight when filling histograms (MC only)
-    self.dataweight      = kwargs.get('dataweight',  ""            ) # extra weight when filling histograms for data
+    strings           = [a for a in args if isinstance(a,str) ]
+    self.name         = name
+    self.name_        = name # backup for addoverflow
+    self.title        = strings[0] if strings else self.name
+    self.filename     = makefilename(self.name.replace('/','_'))
+    self.title        = kwargs.get('title',       self.title    ) # for plot axes
+    self.filename     = kwargs.get('fname',       self.filename )
+    self.filename     = kwargs.get('filename',    self.filename ) # name for files, histograms
+    self.filename     = self.filename.replace('$NAME',self.name).replace('$VAR',self.name) #.replace('$FILE',self.filename)
+    self.tag          = kwargs.get('tag',         ""            )
+    self.units        = kwargs.get('units',       True          ) # for plot axes
+    self.latex        = kwargs.get('latex',       True          ) # for plot axes
+    self.nbins        = None
+    self.min          = None
+    self.max          = None
+    self.bins         = None
+    self.cut          = kwargs.get('cut',         ""            ) # extra cut when filling histograms
+    self.weight       = kwargs.get('weight',      ""            ) # extra weight when filling histograms (MC only)
+    self.dataweight   = kwargs.get('dataweight',  ""            ) # extra weight when filling histograms for data
     self.setbins(*args)
-    self.dividebybinsize = kwargs.get('dividebybinsize', self.hasvariablebins() )
-    self.data            = kwargs.get('data',        True          ) # also draw data
-    self.flag            = kwargs.get('flag',        ""            ) # flag, e.g. 'up', 'down', ...
-    self.binlabels       = kwargs.get('labels',      [ ]           ) # bin labels for x axis
-    self.ymin            = kwargs.get('ymin',        None          )
-    self.ymax            = kwargs.get('ymax',        None          )
-    self.rmin            = kwargs.get('rmin',        None          )
-    self.rmax            = kwargs.get('rmax',        None          )
-    self.logx            = kwargs.get('logx',        False         )
-    self.logy            = kwargs.get('logy',        False         )
-    self.ymargin         = kwargs.get('ymargin',     None          ) # margin between hist maximum and plot's top
-    self.logyrange       = kwargs.get('logyrange',   None          ) # log(y) range from hist maximum to ymin
-    self.position        = kwargs.get('pos',         ""            ) # legend position
-    self.position        = kwargs.get('position',    self.position ) # legend position
-    self.ncols           = kwargs.get('ncols',       None          ) # number of legend columns
-    #self.plot            = kwargs.get('plots',       True          )
-    self.only            = kwargs.get('only',        [ ]           ) # only plot for these patterns
-    self.veto            = kwargs.get('veto',        [ ]           ) # do not plot for these patterns
-    self.blindcuts       = kwargs.get('blind',       ""            ) # string for blind cuts to blind data
-    self.addoverflow_    = kwargs.get('addoverflow', False         ) # add overflow to last bin
+    self.dividebins   = kwargs.get('dividebins', self.hasvariablebins() ) # divide each histogram bins by it bin size (done in Plot.draw)
+    self.data         = kwargs.get('data',        True          ) # also draw data
+    self.flag         = kwargs.get('flag',        ""            ) # flag, e.g. 'up', 'down', ...
+    self.binlabels    = kwargs.get('labels',      [ ]           ) # bin labels for x axis
+    self.ymin         = kwargs.get('ymin',        None          )
+    self.ymax         = kwargs.get('ymax',        None          )
+    self.rmin         = kwargs.get('rmin',        None          )
+    self.rmax         = kwargs.get('rmax',        None          )
+    self.ratiorange   = kwargs.get('rrange',      None          )
+    self.logx         = kwargs.get('logx',        False         )
+    self.logy         = kwargs.get('logy',        False         )
+    self.ymargin      = kwargs.get('ymargin',     None          ) # margin between hist maximum and plot's top
+    self.logyrange    = kwargs.get('logyrange',   None          ) # log(y) range from hist maximum to ymin
+    self.position     = kwargs.get('pos',         ""            ) # legend position
+    self.position     = kwargs.get('position',    self.position ) # legend position
+    self.ncols        = kwargs.get('ncol',        None          ) # number of legend columns
+    self.ncols        = kwargs.get('ncols',       self.ncols    ) # number of legend columns
+    #self.plot         = kwargs.get('plots',       True          )
+    self.only         = kwargs.get('only',        [ ]           ) # only plot for these patterns
+    self.veto         = kwargs.get('veto',        [ ]           ) # do not plot for these patterns
+    self.blindcuts    = kwargs.get('blind',       ""            ) # string for blind cuts to blind data
+    self.addoverflow_ = kwargs.get('addoverflow', False         ) # add overflow to last bin
     if self.latex:
       self.title = makelatex(self.title,units=self.units)
       if 'ctitle' in kwargs:
@@ -103,7 +105,7 @@ class Variable(object):
   def __repr__(self):
     """Returns string representation of Variable object."""
     #return '<%s.%s("%s","%s",%s,%s,%s)>'%(self.__class__.__module__,self.__class__.__name__,self.name,self.title,self.nbins,self.xmin,self.xmax)
-    return '<%s("%s","%s",%s,%s,%s) at %s>'%(self.__class__.__name__,self.name,self.title,self.nbins,self.xmin,self.xmax,hex(id(self)))
+    return '<%s(%r,%r,%s,%s,%s) at %s>'%(self.__class__.__name__,self.name,self.title,self.nbins,self.xmin,self.xmax,hex(id(self)))
   
   def __iter__(self):
     """Start iteration over variable information."""
@@ -119,6 +121,8 @@ class Variable(object):
     if not args:
       args = self.nbins,self.min,self.max
     newdict = self.__dict__.copy()
+    if 'fname' in kwargs:
+      kwargs['filename'] = kwargs['fname']
     if 'filename' in kwargs:
       kwargs['filename'] = kwargs['filename'].replace('$FILE',self.filename)
     for key in kwargs:
@@ -175,29 +179,9 @@ class Variable(object):
     width = (self.max-self.min)/self.nbins
     return self.bins==None and int(self.min)==self.min and int(self.max)==self.max and width==1
   
-  def ispartof(self, *searchterms, **kwargs):
-    """Check if all labels are in the variable's name, title."""
-    searchterms = [l for l in searchterms if l!='']
-    if not searchterms: return False
-    found       = True
-    regex       = kwargs.get('regex',     False )
-    exlcusive   = kwargs.get('exclusive', True  )
-    for searchterm in searchterms:
-      if not regex:
-        searchterm = re.sub(r"([^\.])\*",r"\1.*",searchterm) # replace * with .*
-      if exlcusive:
-        for varlabel in [self.name,self.title]:
-          matches  = re.findall(searchterm,varlabel)
-          if matches:
-            break # try next searchterm, or return True
-        else:
-          return False # none of the labels contain the searchterm
-      else: # inclusive
-        for varlabel in [self.name,self.title]:
-          matches  = re.findall(searchterm,varlabel)
-          if matches:
-            return True # one of the searchterm has been found
-    return exlcusive
+  def match(self, *terms, **kwargs):
+    """Match search terms to the variable's name and title."""
+    return match(terms,[self.name,self.title])
   
   def changecontext(self,*args,**kwargs):
     """Change the contextual title, binning or position for a set of arguments, if it is available"""
@@ -394,7 +378,7 @@ class Variable(object):
     LOG.verb("Variable.addoverflow: '%s' -> '%s' for binning '%s'"%(self.name_,self.name,self.getbins()),verbosity,2)
     return self.name
   
-Var = Variable
+Var = Variable # short alias
 
 
 def wrapvariable(*args,**kwargs):
