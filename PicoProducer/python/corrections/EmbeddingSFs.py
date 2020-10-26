@@ -155,7 +155,9 @@ class EmbeddingSelectionSFs(EmbeddingSFs):
                                                arguments=["gt_pt", "gt_eta"])
 
     def getEmbeddingSelectionTriggerSF(self, event):
-        """Get SF for embedding trigger selection efficiency."""
+        """Get SF for embedding trigger selection efficiency. we use the two gentaus in the event
+           Since we know from the embedding, that there are always two of those in the event, this can be done
+        """
         parameters = {}
         genparticles = Collection(event, 'GenPart')
         i = 1
@@ -167,7 +169,9 @@ class EmbeddingSelectionSFs(EmbeddingSFs):
         return self.sftool_seltrg.getSF(parameters)
 
     def getEmbeddingSelectionIdSF(self, event, index):
-        """Get SF for embedding id selection efficiency."""
+        """Get SF for embedding id selection efficiency. Index 1 gives the negative tau,
+        any other index gives the positive tau
+        """
         parameters = {}
         if index == 1:
             pdgId = 15

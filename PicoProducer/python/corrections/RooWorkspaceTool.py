@@ -19,6 +19,14 @@ class RooScaleFactor:
     def getSF(self, parameters):
         """
             Calculate the SF and return the value
+            First set the RealValue according to the given paramters dict
+            and than return the value of the Workspace function
+
+            The dict contains the argument name and the value e.g.:
+            {
+                'm_pt' : pt,
+                'm_eta': abs(eta)
+            }
         """
         for para in self.arguments:
             self.argset.setRealValue(para, parameters[para])
