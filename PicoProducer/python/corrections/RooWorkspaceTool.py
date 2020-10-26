@@ -20,6 +20,6 @@ class RooScaleFactor:
         """
             Calculate the SF and return the value
         """
-        for paramter in self.arguments:
-            self.argset.setRealValue(paramter, parameters[paramter])
+        for para in self.arguments:
+            self.argset.setRealValue(para, parameters[para])
         return self.function.getVal(self.argset)
